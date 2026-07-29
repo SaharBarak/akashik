@@ -9,7 +9,9 @@
     --paper:#f4ecd8; --paper-muted:#b8ad97; --paper-dim:#7c7062;
     --surface:#0e0b09; --ink:#1d1813;
     --pink:#ff4f6d; --yellow:#f5b921; --teal:#1fae8b;
+    --line:rgba(244,236,216,.07);
     --sans:-apple-system,"SF Pro Text","SF Pro Display","Segoe UI",Roboto,system-ui,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
@@ -19,53 +21,104 @@
       var(--surface);
     color:var(--paper); font-family:var(--sans); -webkit-font-smoothing:antialiased;
     display:flex; flex-direction:column; align-items:center; text-align:center;
-    padding:34px 30px; user-select:none; overflow:hidden;
+    padding:40px 26px 18px; user-select:none; overflow:hidden;
   }
-  .mark{width:56px;height:56px;margin-bottom:16px;filter:drop-shadow(0 2px 8px rgba(0,0,0,.4))}
-  h1{font-size:23px;font-weight:700;letter-spacing:-.02em;line-height:1.15}
-  h1 em{font-style:normal;color:var(--pink)}
-  .sub{margin-top:9px;font-size:13.5px;font-weight:450;color:var(--paper-muted);line-height:1.5;max-width:40ch}
+  /* Overlay titlebar (macOS): traffic lights float over content; this strip
+     keeps the top of the window draggable. */
+  .drag{position:fixed;top:0;left:0;right:0;height:34px;z-index:10}
 
-  .cta{margin-top:22px;display:flex;flex-direction:column;gap:10px;width:100%;max-width:360px}
-  button{
-    font-family:var(--sans); font-size:15px; font-weight:650; letter-spacing:-.01em;
-    padding:14px 18px; border-radius:12px; border:0; cursor:pointer;
-    display:flex; align-items:center; justify-content:center; gap:9px; transition:.12s;
-  }
-  .primary{background:var(--yellow);color:#1d1813}
+  .head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .head img{width:38px;height:38px;filter:drop-shadow(0 2px 8px rgba(0,0,0,.4))}
+  .head h1{font-size:19px;font-weight:700;letter-spacing:-.02em}
+  .head h1 em{font-style:normal;color:var(--pink)}
+
+  /* ── live status grid ── */
+  .stats{width:100%;max-width:460px;display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .tile{background:rgba(244,236,216,.03);border:1px solid var(--line);border-radius:12px;
+    padding:11px 14px;display:flex;flex-direction:column;gap:3px;text-align:left;min-height:64px}
+  .tile .k{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--paper-dim)}
+  .tile .v{font-size:17px;font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums;
+    display:flex;align-items:baseline;gap:6px}
+  .tile .v small{font-size:11px;font-weight:600;color:var(--paper-muted)}
+  .tile .sub{font-size:11px;color:var(--paper-dim);font-variant-numeric:tabular-nums}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none;align-self:center}
+  .dot.on{background:var(--teal);box-shadow:0 0 8px rgba(31,174,139,.55)}
+  .dot.off{background:var(--paper-dim);opacity:.6}
+  .tile.daemon{position:relative}
+  .tile.daemon .toggle{position:absolute;top:10px;right:10px;font-family:var(--sans);
+    font-size:10.5px;font-weight:700;letter-spacing:.02em;padding:5px 10px;border-radius:8px;
+    border:1px solid var(--line);background:transparent;color:var(--paper-muted);cursor:pointer;transition:.12s}
+  .tile.daemon .toggle:hover{color:var(--paper);border-color:rgba(244,236,216,.3)}
+  .tile.daemon .toggle:disabled{opacity:.4;cursor:default}
+  .num-teal{color:var(--teal)} .num-yellow{color:var(--yellow)} .num-pink{color:var(--pink)}
+
+  /* ── setup ── */
+  .cta{margin-top:14px;display:flex;flex-direction:column;gap:8px;width:100%;max-width:460px}
+  button{font-family:var(--sans);cursor:pointer}
+  .primary{font-size:14px;font-weight:650;letter-spacing:-.01em;padding:12px 18px;border-radius:11px;
+    border:0;background:var(--yellow);color:#1d1813;display:flex;align-items:center;justify-content:center;gap:9px;transition:.12s}
   .primary:hover{background:#ffc93f;transform:translateY(-1px)}
   .primary:active{transform:translateY(1px)}
   .primary:disabled{opacity:.55;cursor:default;transform:none}
-  .ghost{background:transparent;color:var(--paper-muted);border:1px solid rgba(244,236,216,.16);font-size:13px;font-weight:550;padding:10px}
+  .ghost{background:transparent;color:var(--paper-muted);border:1px solid rgba(244,236,216,.16);
+    font-size:12px;font-weight:550;padding:8px;border-radius:11px}
   .ghost:hover{color:var(--paper);border-color:rgba(244,236,216,.3)}
+  .ghost:disabled{opacity:.4;cursor:default}
 
-  .providers{margin-top:20px;width:100%;max-width:400px;display:flex;flex-direction:column;gap:6px;
-    max-height:210px;overflow:auto}
-  .prow{display:flex;align-items:center;gap:9px;padding:8px 12px;border-radius:9px;
-    background:rgba(244,236,216,.03);border:1px solid rgba(244,236,216,.06);font-size:13px;text-align:left}
-  .prow .dot{width:7px;height:7px;border-radius:50%;flex:none}
-  .prow .dot.on{background:var(--teal)}
-  .prow .dot.off{background:var(--paper-dim);opacity:.5}
+  .providers{margin-top:12px;width:100%;max-width:460px;display:flex;flex-direction:column;gap:5px;
+    max-height:150px;overflow:auto}
+  .prow{display:flex;align-items:center;gap:9px;padding:7px 12px;border-radius:9px;
+    background:rgba(244,236,216,.03);border:1px solid var(--line);font-size:12.5px;text-align:left}
+  .prow .pdot{width:7px;height:7px;border-radius:50%;flex:none}
+  .prow .pdot.on{background:var(--teal)}
+  .prow .pdot.off{background:var(--paper-dim);opacity:.5}
   .prow .name{font-weight:600;color:var(--paper)}
   .prow .state{margin-left:auto;font-size:11px;font-weight:600;letter-spacing:.02em}
   .prow .state.on{color:var(--teal)}
   .prow .state.off{color:var(--paper-dim)}
 
-  .log{margin-top:16px;width:100%;max-width:400px;min-height:44px;font-size:12px;line-height:1.5;
-    color:var(--paper-dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}
+  .log{margin-top:10px;width:100%;max-width:460px;min-height:34px;font-size:11.5px;line-height:1.5;
+    color:var(--paper-dim);font-family:var(--mono);white-space:pre-wrap;text-align:left}
   .log.ok{color:var(--teal)}
   .log.err{color:var(--pink)}
-  .foot{margin-top:auto;padding-top:16px;font-size:11.5px;color:var(--paper-dim)}
+  .foot{margin-top:auto;padding-top:10px;font-size:11px;color:var(--paper-dim)}
   .foot b{color:var(--paper-muted)}
-  .spin{width:15px;height:15px;border:2px solid rgba(29,24,19,.3);border-top-color:#1d1813;border-radius:50%;
+  .spin{width:14px;height:14px;border:2px solid rgba(29,24,19,.3);border-top-color:#1d1813;border-radius:50%;
     animation:spin .7s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
-  <img class="mark" src="folklore-mark.svg" alt="Folklore" />
-  <h1>wire folklore into <em>every</em><br/>AI tool on this machine</h1>
-  <p class="sub">One setup. It creates your signed identity, starts the local daemon, and registers the folklore memory server in every AI coding tool you have installed — no terminal.</p>
+  <div class="drag" data-tauri-drag-region></div>
+
+  <div class="head">
+    <img src="folklore-mark.svg" alt="" />
+    <h1>folklore <em>·</em> peer memory</h1>
+  </div>
+
+  <div class="stats">
+    <div class="tile daemon">
+      <span class="k">Daemon</span>
+      <span class="v"><span class="dot off" id="d-dot"></span><span id="d-state">checking…</span></span>
+      <span class="sub" id="d-sub">&nbsp;</span>
+      <button class="toggle" id="d-toggle" hidden></button>
+    </div>
+    <div class="tile">
+      <span class="k">Peers connected</span>
+      <span class="v"><span class="num-teal" id="p-count">—</span></span>
+      <span class="sub" id="p-sub">&nbsp;</span>
+    </div>
+    <div class="tile">
+      <span class="k">Knowledge graph</span>
+      <span class="v"><span class="num-yellow" id="g-nodes">—</span><small>nodes</small></span>
+      <span class="sub" id="g-sub">&nbsp;</span>
+    </div>
+    <div class="tile">
+      <span class="k">Reputation</span>
+      <span class="v"><span class="num-pink" id="r-score">—</span><small>rep</small></span>
+      <span class="sub" id="r-sub">&nbsp;</span>
+    </div>
+  </div>
 
   <div class="cta">
     <button class="primary" id="go"><span id="go-label">Install everything</span></button>
@@ -79,13 +132,52 @@
 
 <script type="module">
   const invoke = window.__TAURI__.core.invoke;
-  const providersEl = document.getElementById('providers');
-  const logEl = document.getElementById('log');
-  const goBtn = document.getElementById('go');
-  const goLabel = document.getElementById('go-label');
-  const refreshBtn = document.getElementById('refresh');
+  const listen = window.__TAURI__.event.listen;
+  const $ = (id) => document.getElementById(id);
+  const providersEl = $('providers'), logEl = $('log');
+  const goBtn = $('go'), goLabel = $('go-label'), refreshBtn = $('refresh');
+  const dToggle = $('d-toggle');
 
-  // Parse `folklore harness list` output → [{name, detected}]
+  const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\r/g, '');
+  const fmt = (n) => n == null ? '—' : Intl.NumberFormat('en', {notation: n >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1}).format(n);
+
+  // ── live status ──
+  let busyToggle = false;
+  function renderStatus(s) {
+    const running = !!s.daemon_running;
+    $('d-dot').className = 'dot ' + (running ? 'on' : 'off');
+    $('d-state').textContent = running ? 'Running' : 'Stopped';
+    $('d-sub').innerHTML = running
+      ? (s.heartbeat_fresh ? `pid ${s.daemon_pid}${s.p2p ? ' · p2p up' : ' · p2p off'}` : `pid ${s.daemon_pid}`)
+      : 'not running';
+    if (!busyToggle) {
+      dToggle.hidden = false;
+      dToggle.textContent = running ? 'Stop' : 'Start';
+    }
+    $('p-count').textContent = running && s.heartbeat_fresh ? fmt(s.connected_peers) : '—';
+    $('p-sub').innerHTML = running
+      ? (s.heartbeat_fresh ? (s.p2p ? 'live libp2p connections' : 'p2p not started') : 'no heartbeat yet')
+      : 'daemon offline';
+    $('g-nodes').textContent = fmt(s.graph_nodes);
+    $('g-sub').textContent = s.graph_edges != null ? `${fmt(s.graph_edges)} edges` : 'no graph yet';
+    $('r-score').textContent = fmt(s.reputation);
+    $('r-sub').textContent = `${fmt((s.served_searches||0)+(s.served_fetches||0))} served · ${fmt(s.peers_helped)} peers helped`;
+    if (s.onboarded && goLabel.textContent === 'Install everything') goLabel.textContent = 'Run setup again';
+  }
+  async function pollStatus() {
+    try { renderStatus(await invoke('status_snapshot')); } catch { /* keep last */ }
+  }
+  dToggle.addEventListener('click', async () => {
+    busyToggle = true;
+    const starting = dToggle.textContent === 'Start';
+    dToggle.disabled = true;
+    dToggle.textContent = starting ? 'Starting…' : 'Stopping…';
+    try { await invoke(starting ? 'daemon_start' : 'daemon_stop'); }
+    catch (e) { logEl.className = 'log err'; logEl.textContent = 'Daemon: ' + stripAnsi(e); }
+    finally { busyToggle = false; dToggle.disabled = false; await pollStatus(); }
+  });
+
+  // ── provider scan ──
   function parseHarness(text) {
     const rows = [];
     for (const line of text.split('\n')) {
@@ -94,32 +186,45 @@
     }
     return rows;
   }
-
   function renderProviders(rows) {
-    if (!rows.length) { providersEl.innerHTML = ''; return; }
     providersEl.innerHTML = rows.map(r => `
       <div class="prow">
-        <span class="dot ${r.detected ? 'on' : 'off'}"></span>
+        <span class="pdot ${r.detected ? 'on' : 'off'}"></span>
         <span class="name">${r.name}</span>
         <span class="state ${r.detected ? 'on' : 'off'}">${r.detected ? 'found' : '—'}</span>
       </div>`).join('');
   }
-
   async function scan() {
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = 'Scanning…';
     try {
-      const out = await invoke('harness_list');
-      renderProviders(parseHarness(out));
+      renderProviders(parseHarness(await invoke('harness_list')));
+      if (logEl.classList.contains('err')) { logEl.textContent = ''; logEl.className = 'log'; }
     } catch (e) {
-      logEl.textContent = 'Could not scan (is the folklore CLI available?): ' + e;
+      logEl.textContent = 'Could not scan (is the folklore CLI available?): ' + stripAnsi(e);
       logEl.className = 'log err';
+    } finally {
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = 'Re-scan AI tools';
     }
   }
 
+  // ── onboard with live output ──
+  const tail = [];
+  function pushLine(line) {
+    const clean = stripAnsi(line).trimEnd();
+    if (!clean.trim()) return;
+    tail.push(clean);
+    if (tail.length > 5) tail.shift();
+    logEl.textContent = tail.join('\n');
+  }
   async function install() {
     goBtn.disabled = true;
     goLabel.innerHTML = '<span class="spin"></span> Setting up…';
     logEl.className = 'log';
+    tail.length = 0;
     logEl.textContent = 'Creating identity · starting daemon · wiring providers…';
+    const unlisten = await listen('onboard-line', (e) => pushLine(e.payload));
     try {
       await invoke('run_onboard');
       logEl.className = 'log ok';
@@ -127,16 +232,19 @@
       await scan();
     } catch (e) {
       logEl.className = 'log err';
-      logEl.textContent = 'Setup failed: ' + e;
+      logEl.textContent = 'Setup failed: ' + stripAnsi(e);
     } finally {
+      unlisten();
       goBtn.disabled = false;
       goLabel.textContent = 'Run setup again';
+      await pollStatus();
     }
   }
 
   goBtn.addEventListener('click', install);
   refreshBtn.addEventListener('click', scan);
-  window.addEventListener('DOMContentLoaded', scan);
+  pollStatus();
+  setInterval(pollStatus, 4000);
   scan();
 </script>
 </body>

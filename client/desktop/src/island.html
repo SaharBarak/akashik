@@ -6,36 +6,51 @@
 <style>
   :root{
     --paper:#f4ecd8; --paper-muted:#b8ad97; --paper-dim:#7c7062;
-    --surface:#050505; --pink:#ff4f6d; --yellow:#f5b921; --teal:#1fae8b;
+    --pink:#ff4f6d; --yellow:#f5b921; --teal:#1fae8b;
     --accent:var(--teal);
     --sans:-apple-system,"SF Pro Text","SF Pro Display","Segoe UI",Roboto,system-ui,sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{background:transparent;overflow:hidden;height:100%}
   body{font-family:var(--sans);-webkit-font-smoothing:antialiased;user-select:none;cursor:default}
-  /* The island: near-black to read as the notch/bezel, flush at the top. */
-  .isl{position:fixed;top:0;left:50%;transform:translateX(-50%);
-    width:440px;min-height:0;border-radius:0 0 24px 24px;background:var(--surface);
-    box-shadow:0 22px 46px -18px rgba(0,0,0,.75);overflow:hidden;
-    display:flex;align-items:center;gap:14px;padding:14px 18px 16px}
-  .tile{width:42px;height:42px;flex:none;border-radius:13px;display:grid;place-items:center;
-    background:color-mix(in srgb, var(--accent) 12%, #100d0a);
+
+  /* The island. Collapsed = a pure-black cap the width of the notch, flush
+     with the top bezel. Open = expands sideways + down like the iOS dynamic
+     island. The window itself is transparent and static; only this div moves. */
+  .isl{
+    position:fixed;top:0;left:50%;transform:translateX(-50%);
+    width:210px;height:34px;border-radius:0 0 17px 17px;
+    background:#000;overflow:hidden;
+    display:flex;align-items:center;gap:13px;padding:0 16px;
+    box-shadow:0 14px 34px -14px rgba(0,0,0,.8);
+    transition:width .5s cubic-bezier(.34,1.36,.3,1), height .5s cubic-bezier(.34,1.36,.3,1),
+      border-radius .5s cubic-bezier(.34,1.36,.3,1);
+    will-change:width,height;
+  }
+  .isl.open{width:440px;height:92px;border-radius:0 0 30px 30px}
+
+  .tile{width:44px;height:44px;flex:none;border-radius:14px;display:grid;place-items:center;
+    background:color-mix(in srgb, var(--accent) 12%, #0c0a08);
     border:1px solid color-mix(in srgb, var(--accent) 26%, transparent)}
-  .tile img{width:29px;height:29px}
-  .txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
-  .verb{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--accent)}
-  .hl{font-size:15px;font-weight:600;letter-spacing:-.014em;color:var(--paper);line-height:1.2;
+  .tile img{width:30px;height:30px}
+  .txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .verb{font-size:11px;font-weight:700;letter-spacing:.03em;color:var(--accent);text-transform:uppercase}
+  .hl{font-size:15px;font-weight:650;letter-spacing:-.014em;color:var(--paper);line-height:1.2;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .peer{font-size:12px;font-weight:450;color:var(--paper-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .peer b{color:var(--paper);font-weight:600}
   .metric{flex:none;text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:2px}
-  .metric b{font-size:16px;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}
+  .metric b{font-size:17px;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}
   .metric i{font-size:8.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--paper-dim);font-style:normal}
-  .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:none;align-self:center}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+
+  /* Content fades in after the shell has expanded, out before it collapses. */
+  .tile,.txt,.metric{opacity:0;transition:opacity .18s ease}
+  .isl.open .tile,.isl.open .txt,.isl.open .metric{opacity:1;transition:opacity .25s ease .22s}
 </style>
 </head>
 <body>
-  <div class="isl" id="isl" style="--accent:var(--teal)">
+  <div class="isl" id="isl">
     <div class="tile"><img src="folklore-mark.svg" alt=""></div>
     <div class="txt">
       <span class="verb" id="verb">Online</span>
@@ -46,25 +61,20 @@
   </div>
 
 <script type="module">
-  const invoke = window.__TAURI__.core.invoke;
+  const listen = window.__TAURI__.event.listen;
+  const win = window.__TAURI__.window.getCurrentWindow();
   const isl = document.getElementById('isl');
   const verbEl = document.getElementById('verb');
   const hlEl = document.getElementById('hl');
   const peerEl = document.getElementById('peer');
   const metricEl = document.getElementById('metric');
 
-  // Click the island to dismiss it.
-  document.body.addEventListener('click', () => {
-    invoke('recent_activity', { n: 0 }).catch(()=>{});
-    window.__TAURI__.window.getCurrentWindow().hide().catch(()=>{});
-  });
-
-  const ACCENT = { pull:'#1fae8b', serve:'#ff4f6d', search:'#f5b921' };
+  const ACCENT = { pull:'#1fae8b', serve:'#ff4f6d', search:'#f5b921', status:'#1fae8b', off:'#7c7062' };
+  const fmt = (n) => n == null ? '—' : Intl.NumberFormat('en', {notation: n >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1}).format(n);
 
   function humanPeer(p){
     if(!p) return 'a peer';
     if(p.length <= 14) return p;
-    // deterministic short tag, matching the CLI's peer-XXXX style spirit
     let h = 5381; for(const c of p) h = ((h*33) ^ c.charCodeAt(0)) >>> 0;
     return 'peer-' + h.toString(36).slice(0,4);
   }
@@ -75,20 +85,11 @@
     if(!words) return 'Reusable trace';
     return words.charAt(0).toUpperCase()+words.slice(1);
   }
+  function setAccent(c){ isl.style.setProperty('--accent', c); verbEl.style.color = c; }
 
-  function render(ev){
-    if(!ev){
-      isl.style.setProperty('--accent','var(--teal)');
-      verbEl.textContent='Online'; verbEl.style.color='var(--paper)';
-      hlEl.textContent='folklore';
-      peerEl.textContent='no recent peer activity';
-      metricEl.innerHTML='<span class="dot"></span>';
-      return;
-    }
+  function renderActivity(ev){
     const dir = ev.direction === 'pull' ? 'pull' : (ev.kind === 'fetch' ? 'serve' : 'search');
-    const accent = ACCENT[dir];
-    isl.style.setProperty('--accent', accent);
-    verbEl.style.color = accent;
+    setAccent(ACCENT[dir]);
     const who = humanPeer(ev.peer);
     const tokens = ev.payload_tokens_estimate || 0;
     const nodes = ev.count || (ev.nodes ? ev.nodes.length : 1);
@@ -110,21 +111,39 @@
     hlEl.textContent = readableNode(ev.nodes && ev.nodes[0]);
   }
 
-  async function poll(){
-    try{
-      const lines = await invoke('recent_activity', { n: 8 });
-      let latest = null;
-      for(const line of (lines||[])){
-        try{
-          const ev = JSON.parse(line);
-          if(ev && (ev.direction==='pull' || ev.direction==='serve')) latest = ev;
-        }catch{}
-      }
-      render(latest);
-    }catch(e){ /* daemon not up yet */ }
+  function renderStatus(s){
+    const running = !!s.daemon_running;
+    setAccent(running ? ACCENT.status : ACCENT.off);
+    verbEl.textContent = running ? 'Online' : 'Offline';
+    hlEl.textContent = 'folklore';
+    peerEl.innerHTML = running
+      ? fmt(s.graph_nodes)+' nodes · '+fmt(s.graph_edges)+' edges · <b>'+fmt(s.reputation)+'</b> rep'
+      : 'daemon stopped — open Folklore to start it';
+    metricEl.innerHTML = running
+      ? '<b>'+fmt(s.connected_peers)+'</b><i>peer'+(s.connected_peers===1?'':'s')+'</i>'
+      : '<span class="dot"></span>';
   }
-  poll();
-  setInterval(poll, 1500);
+
+  // ── expand / collapse choreography ──
+  let hideTimer = null, collapsing = null;
+  function expand(ms){
+    clearTimeout(collapsing);
+    requestAnimationFrame(() => requestAnimationFrame(() => isl.classList.add('open')));
+    armHide(ms);
+  }
+  function armHide(ms){ clearTimeout(hideTimer); hideTimer = setTimeout(dismiss, ms); }
+  function dismiss(){
+    clearTimeout(hideTimer);
+    isl.classList.remove('open');
+    collapsing = setTimeout(() => win.hide().catch(()=>{}), 520);
+  }
+  isl.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+  isl.addEventListener('mouseleave', () => armHide(2500));
+  document.body.addEventListener('click', dismiss);
+
+  listen('island-activity', (e) => { renderActivity(e.payload); expand(5200); });
+  listen('island-status',   (e) => { renderStatus(e.payload);   expand(6500); });
+  listen('island-dismiss',  dismiss);
 </script>
 </body>
 </html>

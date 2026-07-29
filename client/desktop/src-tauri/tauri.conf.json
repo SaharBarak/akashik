@@ -1,13 +1,14 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Folklore",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "sh.usefolklore.desktop",
   "build": {
     "frontendDist": "../src"
   },
   "app": {
     "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -16,10 +17,13 @@
         "height": 640,
         "resizable": false,
         "center": true,
-        "visible": true
+        "visible": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       },
       {
         "label": "island",
+        "title": "Folklore Activity",
         "url": "island.html",
         "width": 460,
         "height": 150,

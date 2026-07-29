@@ -1,6 +1,6 @@
 [package]
 name = "folklore-desktop"
-version = "0.1.0"
+version = "0.1.2"
 description = "Folklore desktop — cross-platform tray + onboard wizard"
 authors = ["Folklore"]
 edition = "2021"
@@ -13,8 +13,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Raw NSWindow access for the notch island: window level above the menu bar
+# (Tauri's always-on-top is NSFloatingWindowLevel, which macOS keeps BELOW
+# the menu bar — the island would get pushed under it).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
