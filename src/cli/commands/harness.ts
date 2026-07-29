@@ -37,29 +37,52 @@ import { spawnSync } from 'node:child_process';
 // The MCP server key written into each harness config.
 const SERVER_NAME = 'folklore';
 
+// The published npm package the npx fallback resolves — NOT the server key:
+// `npx --yes folklore` would install an unrelated package of that name.
+const PKG_NAME = '@usefolklore/folklore';
+
 // ─────────────── server command resolution ───────────────
 
 /**
- * How a harness should spawn the folklore MCP server. Prefer a `folklore`
- * binary already on PATH (the post-`npm i -g` happy path — fastest, no
- * per-call npx resolution); otherwise fall back to `npx --yes <pkg>`.
+ * How a harness should spawn the folklore MCP server. Prefer a durable
+ * `folklore` binary already on PATH (the post-`npm i -g` happy path —
+ * fastest, no per-call npx resolution); otherwise fall back to
+ * `npx --yes <pkg>`.
+ *
+ * Two traps make the bare name `folklore` wrong to write into a config:
+ * GUI-launched harnesses (Claude Desktop & co.) spawn servers with a
+ * minimal PATH that misses npm-global / version-manager dirs, and a CLI
+ * running under `npx` sees npx's ephemeral shim dir on its own PATH — a
+ * path that no longer exists when the harness spawns the server later.
+ * So resolve to an absolute path, and treat npx shims as not installed.
  */
 interface ServerCmd {
   readonly command: string;
   readonly args: readonly string[];
 }
 
-const folkloreOnPath = (): boolean => {
+const folkloreBinPath = (): string | null => {
   const probe = platform() === 'win32'
-    ? spawnSync('where', ['folklore'], { stdio: 'ignore' })
-    : spawnSync('command', ['-v', 'folklore'], { stdio: 'ignore', shell: true });
-  return probe.status === 0;
+    ? spawnSync('where', ['folklore'], { encoding: 'utf8' })
+    : spawnSync('command', ['-v', 'folklore'], { encoding: 'utf8', shell: true });
+  if (probe.status !== 0) return null;
+  const first = (probe.stdout ?? '')
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .find((s) => s.length > 0);
+  if (!first) return null;
+  // npx's shim dir (…/_npx/<hash>/node_modules/.bin) is ephemeral — a
+  // config pointing into it breaks as soon as the npx cache rotates.
+  if (/[\\/]_npx[\\/]/.test(first)) return null;
+  return first;
 };
 
-const resolveServerCmd = (pkg: string): ServerCmd =>
-  folkloreOnPath()
-    ? { command: 'folklore', args: ['mcp', 'start'] }
+const resolveServerCmd = (pkg: string): ServerCmd => {
+  const bin = folkloreBinPath();
+  return bin
+    ? { command: bin, args: ['mcp', 'start'] }
     : { command: 'npx', args: ['--yes', pkg, 'mcp', 'start'] };
+};
 
 // ─────────────── harness registry ───────────────
 
@@ -158,7 +181,7 @@ const parseFlags = (args: readonly string[]): Flags => {
   let all = false;
   let dryRun = false;
   let only: Set<string> | undefined;
-  let pkg = SERVER_NAME;
+  let pkg = PKG_NAME;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     const next = (): string => args[++i] ?? '';
