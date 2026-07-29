@@ -1,11 +1,22 @@
 # Folklore
 
-> Folklore is open-source, peer-to-peer memory for AI agents. Peers share their
-> research over the network, so a new agent starts from what the network already
-> knows instead of square one. Locally it answers from a knowledge graph before
+> Folklore is open-source, peer-to-peer memory and open LLM reasoning for AI
+> agents. Peers share their research and signed reasoning traces over the
+> network, so a new agent starts from what the network already worked out
+> instead of square one. Locally it answers from a knowledge graph before
 > it hits the web, and saves what it learns with signed provenance so shared
 > memory can't be poisoned. Works alone on day one, compounds peer-to-peer.
 > CPU-only, no API key, works in any MCP harness (Claude Code, Cursor, Cline, Zed, …).
+
+## Open LLM reasoning (measured live)
+- Reasoning traces are first-class artifacts: distilled, Ed25519-signed,
+  eligibility-gated, shared peer-to-peer. Reuse instead of recompute.
+- Live 2-process bench (TCP + Noise, CPU-only 3B consumer): 3/3 signed traces
+  verified and reused correctly, 1,938 tokens + 24.5 s of model eval avoided,
+  ~14 ms end-to-end, 0 false reuse.
+- 4-peer network sim: 75% of repeat LLM fallback calls avoided, 0 false reuse.
+- Query privacy: peers see what was served, never what was asked.
+- Essay: https://usefolklore.sh/blog/open-reasoning/
 
 ## What it is
 - A memory + research layer that sits between an AI agent and the web. Before a

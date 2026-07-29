@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Open LLM reasoning · Folklore</title>
+<meta name="description" content="Open weights freed the models; the reasoning they produce still evaporates. Open LLM reasoning treats reasoning traces as signed, shareable artifacts peers can verify and reuse — measured: 75% of repeat LLM calls avoided with zero false reuse." />
+<meta name="theme-color" content="#f4ecd8" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="Open LLM reasoning · Folklore" />
+<meta property="og:description" content="Open weights freed the models; the reasoning they produce still evaporates. Open LLM reasoning treats reasoning traces as signed, shareable artifacts peers can verify and reuse — measured: 75% of repeat LLM calls avoided with zero false reuse." />
+<meta property="og:url" content="https://usefolklore.sh/blog/open-reasoning/" />
+<meta property="og:image" content="https://usefolklore.sh/assets/gen/og.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="canonical" href="https://usefolklore.sh/blog/open-reasoning/" />
+<link rel="icon" type="image/svg+xml" href="/assets/folklore-favicon.svg" />
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..900;1,9..144,400..800&family=Geist+Mono:wght@400..600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BlogPosting",
+      "headline": "Open LLM reasoning",
+      "description": "Open weights freed the models; the reasoning they produce still evaporates. Open LLM reasoning treats reasoning traces as signed, shareable artifacts peers can verify and reuse — measured: 75% of repeat LLM calls avoided with zero false reuse.",
+      "url": "https://usefolklore.sh/blog/open-reasoning/",
+      "image": "https://usefolklore.sh/assets/gen/og.png",
+      "author": {
+        "@type": "Organization",
+        "name": "Folklore"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Folklore"
+      },
+      "datePublished": "2026-07-29"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://usefolklore.sh/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Blog",
+          "item": "https://usefolklore.sh/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Open LLM reasoning",
+          "item": "https://usefolklore.sh/blog/open-reasoning/"
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="grain"></div>
+
+<header>
+  <div class="wrap head">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 64 64" fill="none" aria-hidden="true"><path d="M32 12.5 C34.2 18 39.6 22.6 40.9 29 C41.9 34.4 40.6 40.6 36.6 45.4 Q32 49.2 27.4 45.4 C23.4 40.6 22.1 34.4 23.1 29 C24.1 23.6 29.6 20.4 30.6 16.6 C31.1 15 31.6 13.8 32 12.5 Z" fill="#ff4f6d" stroke="#1d1813" stroke-width="2.4" stroke-linejoin="round"/><path d="M32 30 C33 32.6 35.6 34.9 36.2 38 C36.7 40.6 36 43.5 34.2 45.2 Q32 46.7 29.8 45.2 C28 43.5 27.3 40.6 27.8 38 C28.3 35 30.9 32.7 31.4 31.3 C31.6 30.8 31.8 30.4 32 30 Z" fill="#f5b921"/><g stroke="#1d1813" stroke-width="3.2" stroke-linecap="round"><path d="M20 52 L44 47"/><path d="M20 47 L44 52"/></g><g fill="#1d1813"><circle cx="12" cy="38" r="4"/><path d="M5 52c0-4.5 3-7.5 7-7.5s7 3 7 7.5z"/></g><g fill="#1d1813"><circle cx="52" cy="38" r="4"/><path d="M45 52c0-4.5 3-7.5 7-7.5s7 3 7 7.5z"/></g></svg>
+      folklore
+    </a>
+    <nav class="hlinks">
+      <a href="/">Home</a><a href="/store">Store</a><a href="/blog" class="on">Blog</a>
+      <a href="/whitepaper">Paper</a><a href="https://github.com/usefolklore/folklore">GitHub</a>
+    </nav>
+    <a class="hcta" href="/#join">Install</a>
+    <details class="mnav">
+      <summary aria-label="Menu" role="button">☰</summary>
+      <div class="mnav-panel">
+        <a href="/">Home</a><a href="/store">Store</a><a href="/blog" class="on">Blog</a>
+        <a href="/whitepaper">Paper</a><a href="https://github.com/usefolklore/folklore">GitHub</a>
+        <a class="cta" href="/#join">Install</a>
+      </div>
+    </details>
+  </div>
+</header>
+
+<main class="wrap page">
+  <article class="article">
+    <a class="backlink" href="/blog">← all notes</a>
+    <span class="tag">The Network</span>
+    <h1>Open LLM reasoning</h1>
+    <div class="date">2026-07-29 · 5 min read · by <a href="https://github.com/SaharBarak" rel="author">@SaharBarak</a> · <a href="mailto:hi@saharbarak.dev">hi@saharbarak.dev</a></div>
+    <div class="body">
+      <p>Open weights were the first fight, and it's largely won: you can download a frontier-adjacent model, run it on your own metal, and nobody can take it away. But watch what happens the moment those open models start <em>working</em>. Every agent, on every machine, grinds out the same chains of reasoning — grounding the same claims, weighing the same evidence, deriving the same conclusions — and then throws all of it away when the context window closes. The weights are open. The reasoning they produce is exhaust.</p>
+      <p>That's the strange asymmetry of this moment. We collectively spent billions making model <em>capability</em> a commons, then let every unit of model <em>work</em> evaporate on private machines. Closed labs at least recycle internally: your conversations become their training signal. The open ecosystem doesn't even do that. Each open model instance reasons alone, from zero, forever.</p>
+
+      <h2>Reasoning as an artifact, not exhaust</h2>
+      <p>Open LLM reasoning is the missing second act: treat a completed piece of reasoning as a first-class artifact — distilled, signed, addressable — that another agent can find, verify, and reuse instead of recomputing. Not raw chain-of-thought scraped from a transcript, but the resolved trace: the claim, the evidence it grounded on, the verdict, and who signed it.</p>
+      <p>Three properties make a reasoning trace safe to share, and all three are enforceable, not aspirational:</p>
+      <p><b>Signed.</b> Every trace carries the Ed25519 signature of the peer that produced it. A model can refuse what it can't trace to a named hand — that's the difference between a commons and a poisoning surface.</p>
+      <p><b>Eligibility-gated.</b> A trace is only served when it clears a relevance threshold for the incoming question. Below the bar, the requesting agent falls back to its own model. Wrong reuse is worse than no reuse, so the gate is strict by construction.</p>
+      <p><b>Private by default at the query layer.</b> Peers see what was <em>served</em>, never what you <em>asked</em>. Query text never enters the shared feeds; only node ids and counts travel.</p>
+
+      <h2>Measured, not promised</h2>
+      <p>This isn't a roadmap slide — it runs today, over real transport. Two folklore processes on separate machines, TCP with Noise encryption, a CPU-only 3B model on the consumer side, SciFact-labeled claims as the workload: the consumer pulled three signed traces from its peer, all three verified, all three reused correctly, and the local model never had to run — 1,938 tokens and 24.5 seconds of model eval avoided, with reuse decided in about 14 milliseconds end-to-end. Zero false reuse; ineligible traces rejected at the gate.</p>
+      <p>Scale the same mechanism to a small network and the economics get louder: in a four-peer run, once traces persisted and federated, 75% of all repeat LLM fallback calls were avoided — again with zero false reuse. The network converges on doing each piece of reasoning roughly once, then serving it from memory at millisecond cost. That's what "open reasoning" means operationally: the marginal cost of an already-answered question trends toward a fetch.</p>
+
+      <h2>Why open, and not a platform</h2>
+      <p>You could build this as a hosted service — a big shared cache with an API key. That recreates exactly the thing open weights escaped: a central owner of the commons, able to meter it, mine it, or shut it off. Folklore's answer is structural: there is no central server to own. Traces sync peer-to-peer over a CRDT; provenance lives in the signature, not in an account database; a <code>private</code> flag on a node is enforced at the sharing layer, so what stays local stays local. The reasoning commons belongs to the peers who produced it, the way it should have from the start.</p>
+      <p>Open weights made intelligence something you can hold. Open reasoning makes the <em>work</em> of intelligence something a community can keep. One is a download; the other is folklore — knowledge that survives because peers pass it on, signed by whoever ground it out first.</p>
+      <p style="margin-top:1.6em"><a class="btn btn-primary" href="/#join">Install Folklore</a> <a class="btn" href="/whitepaper" style="margin-left:.6em">Read the white paper</a></p>
+    </div>
+  </article>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <a href="/">Home</a>
+    <a href="/store">Store</a>
+    <a href="/blog">Blog</a>
+    <a href="/whitepaper">White Paper</a>
+    <a href="/legal/terms">Terms</a>
+    <a href="/legal/privacy">Privacy</a>
+    <a href="/legal/refund">Refund</a>
+    <span class="r">MIT · signed by you · no central server, ever</span>
+  </div>
+</footer>
+</body>
+</html>
