@@ -18,7 +18,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { ResultAsync, errAsync, okAsync } from 'neverthrow';
 import { GraphError } from '../domain/errors.js';
-import { empty, fromJson, toJson, type Graph } from '../domain/graph.js';
+import { empty, fromJson, size, toJson, type Graph } from '../domain/graph.js';
 
 /** Port — anything that knows how to load and save a Graph. */
 export interface GraphRepository {
@@ -101,6 +101,20 @@ export const fileGraphRepository = (path: string): GraphRepository => {
       const tmp = `${path}.tmp`;
       writeFileSync(tmp, JSON.stringify(toJson(graph), null, 2));
       renameSync(tmp, path);
+      // Sidecar counts (graph-meta.json) so UI surfaces can show graph
+      // size without parsing a hundreds-of-MB graph.json. Best-effort:
+      // a failed meta write must not fail the save that just landed.
+      try {
+        const metaPath = path.replace(/\.json$/, '-meta.json');
+        const metaTmp = `${metaPath}.tmp`;
+        writeFileSync(
+          metaTmp,
+          JSON.stringify({ ...size(graph), updated_at: new Date().toISOString() }),
+        );
+        renameSync(metaTmp, metaPath);
+      } catch {
+        /* meta is observability only */
+      }
       // Write-through: the just-saved graph IS the freshest state.
       // Subsequent load() returns it without re-reading + re-parsing
       // the file we just wrote.

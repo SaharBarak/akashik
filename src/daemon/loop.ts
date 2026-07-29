@@ -38,6 +38,7 @@ import { loadOrCreateIdentity, createNode, dialAndTag } from '../infrastructure/
 import { startRendezvous, type RendezvousHandle } from '../infrastructure/rendezvous.js';
 import { startTrackerRendezvous, type TrackerRendezvousHandle } from '../infrastructure/tracker-rendezvous.js';
 import { loadPeers } from '../infrastructure/peer-store.js';
+import { writeDaemonStatus } from './status-file.js';
 import { buildPatterns } from '../domain/sharing.js';
 import { enforceRetention } from '../application/session-ingest.js';
 import { refreshHotCache } from '../application/hot-cache-tick.js';
@@ -971,6 +972,22 @@ export const startLoop = async (deps: DaemonDeps): Promise<LoopHandle> => {
   // Splice the live registry and health tracker into deps so runOneTick sees them.
   const tickDeps: DaemonDeps = { ...deps, shareSync: liveSync, healthTracker: liveHealthTracker };
 
+  // ───── status heartbeat — daemon-status.json for UI surfaces ─────
+  // The research tick can be hours apart; the desktop app polls every few
+  // seconds. A separate cheap heartbeat keeps "running · N peers" honest.
+  const startedAt = new Date().toISOString();
+  const heartbeat = (): void => {
+    writeDaemonStatus(deps.homePath, {
+      pid: process.pid,
+      started_at: startedAt,
+      p2p: liveNode !== null,
+      connected_peers: liveNode ? liveNode.getPeers().length : 0,
+    });
+  };
+  heartbeat();
+  const statusInterval = setInterval(heartbeat, 30_000);
+  statusInterval.unref();
+
   // Run immediately on start
   await runOneTick(tickDeps);
 
@@ -991,6 +1008,7 @@ export const startLoop = async (deps: DaemonDeps): Promise<LoopHandle> => {
     if (cleanedUp) return;
     cleanedUp = true;
     try { clearInterval(interval); } catch { /* benign */ }
+    try { clearInterval(statusInterval); } catch { /* benign */ }
     if (liveRendezvous) {
       try { liveRendezvous.stop(); } catch { /* benign */ }
     }
