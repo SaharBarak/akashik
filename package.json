@@ -73,6 +73,7 @@
     "@libp2p/peer-id": "^6.0.6",
     "@libp2p/tcp": "^11.0.15",
     "@libp2p/upnp-nat": "4.0.15",
+    "@libp2p/websockets": "10.1.19",
     "@libp2p/yamux": "^8.0.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
@@ -96,5 +97,8 @@
     "yaml": "^2.8.3",
     "yjs": "13.6.30",
     "zod": "^4.3.6"
+  },
+  "overrides": {
+    "uint8arraylist": "^3.0.2"
   }
 }

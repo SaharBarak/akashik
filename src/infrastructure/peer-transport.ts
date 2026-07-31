@@ -15,6 +15,7 @@ import type { Ed25519PrivateKey, Libp2p } from '@libp2p/interface';
 import type { PeerInfo } from '@libp2p/interface';
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
+import { webSockets } from '@libp2p/websockets';
 import { noise } from '@libp2p/noise';
 import { yamux } from '@libp2p/yamux';
 import { mdns } from '@libp2p/mdns';
@@ -133,6 +134,23 @@ export interface TransportConfig {
    * the relay's data cost is negligible). Requires a non-loopback listenHost.
    */
   readonly relayServer?: boolean;
+  /**
+   * Additional WebSocket listener port. 0 (default) = no WS listener, TCP only.
+   * A public relay sets this so leaves can reach it over `wss` on 443 — the one
+   * port that survives CGNAT, hotel wifi, and corporate egress filtering, and
+   * the only way to run on a shared/anycast IP whose edge terminates TLS.
+   * The listener itself is plain `ws` on an internal port; TLS lives at the
+   * edge, and `announceAddrs` publishes the `…/tcp/443/wss` form.
+   */
+  readonly wsPort?: number;
+  /**
+   * Multiaddrs to publish INSTEAD of the locally-observed ones (libp2p appends
+   * `/p2p/<peerId>` itself, so give them without that suffix). Required
+   * whenever the reachable address differs from the bound one — a container
+   * behind an edge proxy binds `/ip4/0.0.0.0/tcp/8080/ws` but is dialled at
+   * `/dns4/host/tcp/443/wss`. Empty default → announce what we bound.
+   */
+  readonly announceAddrs?: readonly string[];
 }
 
 /**
@@ -366,18 +384,34 @@ export const createNode = (
       // relays causes the transport to search for ANY relay peer, producing noisy
       // dial attempts (Anti-Pattern from 18-RESEARCH.md line 331).
       const listenAddrs: string[] = [`/ip4/${host}/tcp/${cfg.listenPort}`];
+      // WebSocket listener (relay / edge-fronted nodes). Plain `ws` — TLS is
+      // terminated by the edge, which then proxies the upgrade to this port.
+      const wsPort = cfg.wsPort ?? 0;
+      if (wsPort > 0) {
+        listenAddrs.push(`/ip4/${host}/tcp/${wsPort}/ws`);
+      }
       if (cfg.relays && cfg.relays.length > 0) {
         listenAddrs.push('/p2p-circuit');
       }
+      // Announce overrides the observed addrs entirely, so a node behind an
+      // edge proxy publishes the address peers can actually dial.
+      const announceAddrs = (cfg.announceAddrs ?? []).filter((a) => a.length > 0);
 
       const node = await createLibp2p({
         privateKey: identity.privateKey,
-        addresses: { listen: listenAddrs },
+        addresses: {
+          listen: listenAddrs,
+          ...(announceAddrs.length > 0 ? { announce: [...announceAddrs] } : {}),
+        },
         // Phase 18 NET-01/NET-03: circuitRelayTransport() goes in transports[]
         // (CLIENT — dial via relays). The hop-relay server variant is
         // explicitly out of scope per CONTEXT.md (deferred to v3).
         // NET-01 multiplexed streams are preserved via yamux() below.
-        transports: [tcp(), circuitRelayTransport()],
+        // webSockets() is wired unconditionally on the CLIENT side too — a leaf
+        // never listens on ws (wsPort 0) but must be able to DIAL the relay's
+        // `…/tcp/443/wss` address, and a transport it lacks is a peer it cannot
+        // reach. Adding the transport costs nothing until a ws addr is dialled.
+        transports: [tcp(), webSockets(), circuitRelayTransport()],
         connectionEncrypters: [noise()],
         streamMuxers: [yamux()],  // NET-01 multiplexed streams
         peerDiscovery,

@@ -22,6 +22,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadConfig } from '../../infrastructure/config-loader.js';
 
 type Check = {
   name: string;
@@ -433,6 +434,51 @@ function runFix(): number {
   return r.status ?? 1;
 }
 
+/**
+ * Discovery reachability. Everything else can be green while the node is alone
+ * on the network: a tracker URL pointing at a domain we don't own, or a KV
+ * binding that was never wired, both fail silently inside the daemon's
+ * best-effort announce loop. One HTTP round trip surfaces it.
+ *
+ * Non-blocking — a node with no tracker still works locally and over mDNS.
+ */
+async function checkTracker(): Promise<Check> {
+  const name = 'peer discovery (tracker)';
+  const cfgRes = await loadConfig(join(folkloreHome(), 'config.yaml'));
+  if (cfgRes.isErr()) {
+    return { name, ok: false, detail: 'config unreadable — cannot probe', blocking: false };
+  }
+  const { url, namespace } = cfgRes.value.peer.tracker;
+  if (url.length === 0) {
+    return { name, ok: true, detail: 'disabled (local/LAN only)', blocking: false };
+  }
+
+  try {
+    const res = await fetch(`${url.replace(/\/+$/, '')}/tracker/peers?ns=${encodeURIComponent(namespace)}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    const body = (await res.json()) as { peers?: unknown[]; error?: string };
+    if (!res.ok || !Array.isArray(body.peers)) {
+      return {
+        name,
+        ok: false,
+        detail: `${url} → HTTP ${res.status}${body.error ? ` (${body.error})` : ''}`,
+        blocking: false,
+        fix: 'tracker is not serving peers — check the TRACKER_KV binding and that peer.tracker.url points at the deployed site',
+      };
+    }
+    return { name, ok: true, detail: `${url} reachable — ${body.peers.length} peer(s) announced`, blocking: false };
+  } catch (e) {
+    return {
+      name,
+      ok: false,
+      detail: `${url} unreachable (${(e as Error).message})`,
+      blocking: false,
+      fix: 'check connectivity, or set peer.tracker.url: "" to run local-only',
+    };
+  }
+}
+
 export async function doctor(args: string[]): Promise<number> {
   if (args.includes('--fix')) {
     const code = runFix();
@@ -456,6 +502,7 @@ export async function doctor(args: string[]): Promise<number> {
     checkHookEngine(),
     checkMcpRegistered(),
     checkStoreDrift(),
+    await checkTracker(),
   ];
 
   console.log('folklore doctor\n');

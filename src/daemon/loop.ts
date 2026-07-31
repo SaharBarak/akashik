@@ -527,6 +527,8 @@ export const startLoop = async (deps: DaemonDeps): Promise<LoopHandle> => {
             peersPath: join(deps.homePath, 'peers.json'), // enables peer:discovery persistence
             relays: cfgRes.value.peer.relays,
             relayServer: cfgRes.value.peer.relay_server, // dedicated public relay node
+            wsPort: cfgRes.value.peer.ws_port, // relay: extra ws listener behind a TLS edge
+            announceAddrs: cfgRes.value.peer.announce, // publish the edge addr, not the bound one
             upnp: cfgRes.value.peer.upnp,
           });
           if (nodeRes.isErr()) {

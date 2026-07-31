@@ -7,11 +7,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import { sanitizeAddrs, validPeerId, validNamespace } from '../functions/tracker/_common.js';
-import { announce, fetchPeers } from '../src/infrastructure/tracker-client.js';
+import { announce, announceableAddrs, fetchPeers } from '../src/infrastructure/tracker-client.js';
 
 const A = '12D3KooWAT8PmSZdzUaNFTxafhafHF9m34HT9pgyx54mbXLyXksS';
 const B = '12D3KooWKfQpEMbUGryqE91Hyi8st18tZgR1sB1kijHwxxJRZ2k9';
-const addrA = `/ip4/127.0.0.1/tcp/4211/p2p/${A}`;
+// TEST-NET-3 (203.0.113.0/24) — a routable-shaped literal, so the fixtures
+// exercise the accept path rather than the non-routable reject path.
+const addrA = `/ip4/203.0.113.10/tcp/4211/p2p/${A}`;
 
 test('validNamespace / validPeerId gate junk input', () => {
   assert.equal(validNamespace('folklore'), true);
@@ -44,8 +46,34 @@ test('sanitizeAddrs accepts a relayed /p2p-circuit addr (NAT/CGNAT peers) but re
 test('sanitizeAddrs drops malformed / oversized / duplicate addrs and caps count', () => {
   assert.deepEqual(sanitizeAddrs(['garbage', '', 42, null], A), []);
   assert.deepEqual(sanitizeAddrs([addrA, addrA], A), [addrA]); // dedup
-  const many = Array.from({ length: 20 }, (_, i) => `/ip4/127.0.0.1/tcp/${5000 + i}/p2p/${A}`);
+  const many = Array.from({ length: 20 }, (_, i) => `/ip4/203.0.113.10/tcp/${5000 + i}/p2p/${A}`);
   assert.equal(sanitizeAddrs(many, A).length, 8); // MAX_ADDRS
+});
+
+test('sanitizeAddrs REJECTS non-routable literals (a loopback pointer poisons the directory)', () => {
+  for (const bad of [
+    `/ip4/127.0.0.1/tcp/4211/p2p/${A}`,
+    `/ip4/0.0.0.0/tcp/4211/p2p/${A}`,
+    `/ip4/169.254.7.7/tcp/4211/p2p/${A}`,
+    `/ip6/::1/tcp/4211/p2p/${A}`,
+    `/ip6/fe80::1/tcp/4211/p2p/${A}`,
+  ]) {
+    assert.deepEqual(sanitizeAddrs([bad], A), [], bad);
+  }
+});
+
+test('announceableAddrs publishes only dialable addrs; circuit always survives', () => {
+  const R = '12D3KooWCEMTaLeURA8p9YewshQ9sBWo4oHWSDf6z31ZdPw6UL7z';
+  const loopback = `/ip4/127.0.0.1/tcp/4103/p2p/${A}`;
+  const lan = `/ip4/192.168.1.20/tcp/4103/p2p/${A}`;
+  const cgnat = `/ip4/100.71.0.9/tcp/4103/p2p/${A}`;
+  const circuit = `/ip4/5.6.7.8/tcp/4001/p2p/${R}/p2p-circuit/p2p/${A}`;
+
+  assert.deepEqual(announceableAddrs([loopback, lan, cgnat, addrA, circuit]), [addrA, circuit]);
+  // A daemon bound to loopback has nothing to publish → caller falls back to fetch.
+  assert.deepEqual(announceableAddrs([loopback]), []);
+  // Escape hatch for a self-hosted LAN tracker without multicast.
+  assert.deepEqual(announceableAddrs([loopback, lan], true), [lan]);
 });
 
 // ── client I/O against a loopback server implementing the contract ──
@@ -82,7 +110,7 @@ const startServer = (): Promise<{ server: Server; url: string }> =>
 test('announce registers self and returns the rest of the swarm; fetchPeers lists all', async () => {
   const { server, url } = await startServer();
   try {
-    const addrB = `/ip4/127.0.0.1/tcp/4212/p2p/${B}`;
+    const addrB = `/ip4/203.0.113.11/tcp/4212/p2p/${B}`;
     const first = await announce(url, 'folklore', A, [addrA]);
     assert.equal(first.isOk(), true);
     if (first.isOk()) assert.deepEqual(first.value.peers, []); // alice alone

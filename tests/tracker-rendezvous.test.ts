@@ -9,7 +9,7 @@ import { sanitizeAddrs } from '../functions/tracker/_common.js';
 import { trackerTick, MAX_DIALS_PER_ROUND } from '../src/infrastructure/tracker-rendezvous.js';
 
 const SELF = '12D3KooWSELFxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
-const selfAddr = `/ip4/127.0.0.1/tcp/4500/p2p/${SELF}`;
+const selfAddr = `/ip4/203.0.113.10/tcp/4500/p2p/${SELF}`;
 
 // Minimal libp2p mock: only the surface trackerTick + dialAndTag touch.
 const makeNode = (opts: { self?: string; addrs?: string[]; connected?: string[] } = {}) => {
@@ -45,6 +45,11 @@ const startTracker = (): Promise<{ server: Server; url: string }> =>
         });
         return;
       }
+      if (req.method === 'GET' && url.pathname === '/tracker/peers') {
+        const peers = [...store.values()];
+        json(200, { ns: url.searchParams.get('ns'), count: peers.length, peers });
+        return;
+      }
       json(404, { error: 'nope' });
     });
     server.listen(0, '127.0.0.1', () => {
@@ -65,7 +70,7 @@ test('trackerTick announces self and dials a freshly-discovered peer', async () 
   const { server, url } = await startTracker();
   try {
     const B = '12D3KooWPEERBxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
-    await seedPeer(url, B, `/ip4/127.0.0.1/tcp/4600/p2p/${B}`);
+    await seedPeer(url, B, `/ip4/203.0.113.11/tcp/4600/p2p/${B}`);
     const { node, dialed } = makeNode();
     const n = await trackerTick({ node, trackerUrl: url, namespace: 'folklore', log: () => {} });
     assert.equal(n, 1, 'should dial the one discovered peer');
@@ -74,12 +79,29 @@ test('trackerTick announces self and dials a freshly-discovered peer', async () 
   } finally { server.close(); }
 });
 
+test('trackerTick with only non-routable addrs falls back to fetch (never announces junk)', async () => {
+  const { server, url } = await startTracker();
+  try {
+    const B = '12D3KooWPEERBxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+    await seedPeer(url, B, `/ip4/203.0.113.11/tcp/4600/p2p/${B}`);
+    // A daemon bound to loopback: nothing publishable, but discovery still works.
+    const { node, dialed } = makeNode({ addrs: [`/ip4/127.0.0.1/tcp/4500/p2p/${SELF}`] });
+    const n = await trackerTick({ node, trackerUrl: url, namespace: 'folklore', log: () => {} });
+    assert.equal(n, 1, 'read-only fetch still discovers and dials');
+    assert.ok(dialed[0].endsWith(`/p2p/${B}`));
+
+    // ...and we are absent from the directory, having announced nothing.
+    const listed = await (await fetch(`${url}/tracker/peers?ns=folklore`)).json();
+    assert.deepEqual(listed.peers.map((p: { peerId: string }) => p.peerId), [B]);
+  } finally { server.close(); }
+});
+
 test('trackerTick skips self and already-connected peers', async () => {
   const { server, url } = await startTracker();
   try {
     const B = '12D3KooWPEERBxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
     await seedPeer(url, SELF, selfAddr);                                  // ourselves
-    await seedPeer(url, B, `/ip4/127.0.0.1/tcp/4600/p2p/${B}`);           // already connected
+    await seedPeer(url, B, `/ip4/203.0.113.11/tcp/4600/p2p/${B}`);           // already connected
     const { node, dialed } = makeNode({ connected: [B] });
     const n = await trackerTick({ node, trackerUrl: url, namespace: 'folklore', log: () => {} });
     assert.equal(n, 0, 'self is excluded by the tracker response; connected peer is skipped');
@@ -92,7 +114,7 @@ test('trackerTick caps dial attempts per round', async () => {
   try {
     for (let i = 0; i < MAX_DIALS_PER_ROUND + 5; i++) {
       const id = `12D3KooWFLOOD${String(i).padStart(4, '0')}xxxxxxxxxxxxxxxxxxxx`;
-      await seedPeer(url, id, `/ip4/127.0.0.1/tcp/${5000 + i}/p2p/${id}`);
+      await seedPeer(url, id, `/ip4/203.0.113.12/tcp/${5000 + i}/p2p/${id}`);
     }
     const { node, dialed } = makeNode();
     await trackerTick({ node, trackerUrl: url, namespace: 'folklore', log: () => {} });

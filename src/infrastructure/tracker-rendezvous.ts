@@ -8,7 +8,7 @@
  * available as an opt-in (peer.dht.public) for tracker-independent operation.
  */
 import type { Libp2p } from '@libp2p/interface';
-import { announce, fetchPeers, type TrackerPeer } from './tracker-client.js';
+import { announce, announceableAddrs, fetchPeers, type TrackerPeer } from './tracker-client.js';
 import { dialAndTag } from './peer-transport.js';
 
 /** Steady re-announce cadence. TTL on the tracker is 180s; re-announcing every
@@ -39,7 +39,11 @@ export interface TrackerRendezvousHandle {
  */
 export const trackerTick = async (deps: TrackerRendezvousDeps): Promise<number> => {
   const self = deps.node.peerId.toString();
-  const myAddrs = deps.node.getMultiaddrs().map((a) => a.toString());
+  // Only publish addresses another peer could actually dial. A daemon bound to
+  // loopback (or one whose only addrs are LAN-private) announces nothing and
+  // degrades to a read-only fetch below — it still DISCOVERS and dials out,
+  // it just stops poisoning the directory with undialable pointers.
+  const myAddrs = announceableAddrs(deps.node.getMultiaddrs().map((a) => a.toString()));
 
   const peersRes = myAddrs.length > 0
     ? (await announce(deps.trackerUrl, deps.namespace, self, myAddrs)).map((r) => r.peers)
