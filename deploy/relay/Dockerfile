@@ -45,7 +45,7 @@ ENV FOLKLORE_HOME=/data
 # The entrypoint seeds it on first boot only, leaving operator edits intact.
 RUN printf 'peer:\n  port: 4103\n  ws_port: 8080\n  listen_host: "0.0.0.0"\n  announce:\n    - "/dns4/folklore-relay.fly.dev/tcp/443/wss"\n  mdns: false\n  upnp: false\n  relay_server: true\n  dht:\n    enabled: false\n    public: false\n  tracker:\n    url: ""\ndaemon:\n  interval_seconds: 3600\n' > /app/relay-config.template.yaml
 
-RUN printf '#!/bin/sh\nset -e\nmkdir -p "$FOLKLORE_HOME"\nif [ ! -f "$FOLKLORE_HOME/config.yaml" ]; then\n  cp /app/relay-config.template.yaml "$FOLKLORE_HOME/config.yaml"\n  echo "relay: seeded $FOLKLORE_HOME/config.yaml from image template"\nfi\nexec node dist/cli/index.js daemon _run\n' > /app/entrypoint.sh \
+RUN printf '#!/bin/sh\nset -e\nmkdir -p "$FOLKLORE_HOME"\nif [ ! -f "$FOLKLORE_HOME/config.yaml" ]; then\n  cp /app/relay-config.template.yaml "$FOLKLORE_HOME/config.yaml"\n  echo "relay: seeded $FOLKLORE_HOME/config.yaml from image template"\nfi\nexec node dist/cli/index.js relay\n' > /app/entrypoint.sh \
   && chmod +x /app/entrypoint.sh
 
 EXPOSE 4103 8080

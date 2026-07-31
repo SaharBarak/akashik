@@ -63,6 +63,7 @@ import { weights } from './commands/weights.js';
 import { remember } from './commands/remember.js';
 import { resume } from './commands/resume.js';
 import { live } from './commands/live.js';
+import { relay } from './commands/relay.js';
 
 type CommandFn = (args: string[]) => Promise<number> | number;
 
@@ -91,6 +92,7 @@ const commands: Record<string, CommandFn> = {
   export: exportObsidian,
   dashboard,
   peer,
+  relay,
   share,
   unshare,
   touch,
