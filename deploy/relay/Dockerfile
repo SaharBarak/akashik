@@ -22,7 +22,14 @@ WORKDIR /app
 # override it (`fly deploy --build-arg FOLKLORE_REF=v5.1.0`) to run a release
 # rather than whatever main happens to be, or to deploy a fix before it merges.
 ARG FOLKLORE_REF=main
-RUN git clone --depth 1 --branch "$FOLKLORE_REF" https://github.com/usefolklore/folklore.git . \
+# fetch+checkout rather than `clone --branch`: this form accepts a commit SHA as
+# well as a branch or tag, and a SHA also busts the layer cache — `clone
+# --branch main` is a byte-identical RUN line on every build, so the builder
+# happily reuses a months-old checkout and deploys stale code.
+RUN git init -q . \
+  && git remote add origin https://github.com/usefolklore/folklore.git \
+  && git fetch -q --depth 1 origin "$FOLKLORE_REF" \
+  && git checkout -q FETCH_HEAD \
   && npm ci \
   && npm run build
 
