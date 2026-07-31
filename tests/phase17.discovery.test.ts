@@ -316,6 +316,17 @@ describe('Phase 17: PeerConfig defaults (Plan 01 foundation)', () => {
     assert.equal(cfg.peer.ws_port, 0, 'only a relay listens on ws; leaves stay TCP-only');
     assert.deepEqual(cfg.peer.announce, [], 'announce overrides are opt-in');
 
+    // A fresh install must reserve on the shipped relay without configuration —
+    // otherwise every CGNAT peer is discoverable but undialable.
+    if (process.env.FOLKLORE_RELAYS === undefined) {
+      assert.equal(cfg.peer.relays.length, 1, 'a relay must ship as a default');
+      assert.match(
+        cfg.peer.relays[0],
+        /^\/dns4\/[^/]+\/tcp\/443\/wss\/p2p\/12D3KooW/,
+        'the default relay must be wss on 443 — raw TCP on a custom port is what hostile networks block',
+      );
+    }
+
     rmSync(tmp, { recursive: true, force: true });
   });
 
