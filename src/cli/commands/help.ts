@@ -40,6 +40,7 @@ federation (P2P):
   touch <peer-id>         one-shot pull of a peer's shared graph (redacted)
   oracle <sub>            bulletin board — ask/answer questions across the swarm
   swarm <sub>             swarm-sim corpus tools (virtual peer responders)
+  relay                   run as a circuit-relay server for NAT-bound peers
   identity                show DID + key material status
 
 ingest + index:
