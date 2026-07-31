@@ -247,14 +247,25 @@ const ENV_BOOTSTRAP_PEERS: readonly string[] = (process.env.FOLKLORE_BOOTSTRAP_P
 // kills discovery for every install.
 const FOLKLORE_TRACKER_URL: string = process.env.FOLKLORE_TRACKER_URL ?? 'https://usefolklore.sh';
 
-// Default circuit-relay multiaddr(s) for NAT'd leaf nodes (comma-separated).
-// A node with a relay configured reserves a slot and advertises a reachable
-// /…/p2p-circuit address. Empty by default until a relay is deployed; wire it
-// once the relay node is up (FOLKLORE_RELAYS or peer.relays in config.yaml).
-const ENV_RELAYS: readonly string[] = (process.env.FOLKLORE_RELAYS ?? '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+// The shipped circuit relay (deploy/relay, running on Fly). A leaf reserves a
+// slot here on boot and advertises `/…/p2p-circuit/p2p/<its-id>` to the
+// tracker, which is the ONLY dialable address a CGNAT or symmetric-NAT peer
+// has — and that is most home machines. wss on 443 rather than raw TCP so the
+// reservation survives hotel wifi and corporate egress filtering.
+// Override with FOLKLORE_RELAYS or peer.relays; set FOLKLORE_RELAYS=' ' to opt out.
+const DEFAULT_RELAYS: readonly string[] = [
+  '/dns4/folklore-relay.fly.dev/tcp/443/wss/p2p/12D3KooWPxH5Uub1v33WksGuTFUUy7qPD5ptdSYpX9RVhGxjHXsb',
+];
+
+// Comma-separated relay multiaddrs from the environment; falls back to the
+// shipped relay above so a fresh install is reachable with zero configuration.
+const ENV_RELAYS: readonly string[] = ((): readonly string[] => {
+  const raw = process.env.FOLKLORE_RELAYS;
+  if (raw === undefined) return DEFAULT_RELAYS;
+  const parsed = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  // An explicitly-set-but-empty var is a deliberate opt-out, not "use defaults".
+  return parsed;
+})();
 
 // Externally-reachable multiaddrs to publish instead of the bound ones (no
 // /p2p/<id> suffix — libp2p appends it). Only an edge-fronted node needs this.
