@@ -11,7 +11,10 @@
 # publish the multiaddr as the network default (FOLKLORE_RELAYS).
 FROM node:22-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends git python3 \
+# ca-certificates is NOT in node:*-slim — without it git's TLS verification of
+# github.com fails outright ("server certificate verification failed").
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates git python3 \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
