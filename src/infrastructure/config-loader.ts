@@ -87,10 +87,18 @@ export interface PeerConfig {
   /** Listening port for the libp2p TCP transport. 0 = OS-assigned (default). */
   readonly port: number;
   /**
-   * Interface to bind the TCP listener to. Default '127.0.0.1' (localhost only)
-   * so ephemeral CLI commands do not expose a libp2p endpoint on public
-   * interfaces. Set to '0.0.0.0' when running as a daemon that should
-   * accept remote peer connections.
+   * Interface to bind the TCP listener to. Default '0.0.0.0' — the DAEMON is
+   * the only consumer of this key (every ephemeral CLI/MCP node hardcodes
+   * '127.0.0.1' at its own createNode call), and a daemon bound to loopback
+   * can never be dialled: it announces `/ip4/127.0.0.1/…` to the tracker,
+   * which every other peer then dials against ITSELF. Loopback also makes
+   * UPnP a silent no-op, so no port mapping is ever requested. Set to
+   * '127.0.0.1' to run the daemon local-only (mDNS/LAN discovery still works,
+   * WAN peering does not).
+   *
+   * The exposed surface is the libp2p TCP listener only — noise-encrypted and
+   * peer-id-authenticated, with the federated-search rate limiter in front of
+   * it. No plaintext HTTP endpoint is opened on this interface.
    */
   readonly listen_host: string;
   /** mDNS LAN auto-discovery. Default true (enabled) per DISC-02 locked decision. */
@@ -115,7 +123,7 @@ export interface PeerConfig {
    * discovery path. A tiny stateless endpoint that holds peer pointers only;
    * cheaper and faster than the public DHT. Set url to '' to disable. */
   readonly tracker: {
-    /** Base URL of the tracker (e.g. https://usefolklore.com). '' = disabled. */
+    /** Base URL of the tracker (e.g. https://usefolklore.sh). '' = disabled. */
     readonly url: string;
     /** Swarm namespace — peers only discover others in the same namespace. */
     readonly namespace: string;
@@ -135,6 +143,19 @@ export interface PeerConfig {
    * NO hardcoded IPFS bootstrap nodes — users opt in explicitly.
    */
   readonly relays: readonly string[];
+  /**
+   * Extra WebSocket listener port. 0 (default) = TCP only. A public relay sets
+   * this and puts TLS at the edge, so leaves reach it over `wss` on 443 — the
+   * port that survives CGNAT, hotel wifi and corporate egress filters.
+   */
+  readonly ws_port: number;
+  /**
+   * Multiaddrs to publish instead of the locally-bound ones (no `/p2p/<id>`
+   * suffix — libp2p appends it). Needed only when the dialable address differs
+   * from the bound one, e.g. `/dns4/host/tcp/443/wss` in front of a container
+   * listening on plain ws. Empty default → announce what we bound.
+   */
+  readonly announce: readonly string[];
   /**
    * UPnP port mapping. Default true — @libp2p/upnp-nat is a no-op on
    * listen_host=127.0.0.1 (Pitfall 2 from 18-RESEARCH.md) and catches
@@ -221,7 +242,10 @@ const ENV_BOOTSTRAP_PEERS: readonly string[] = (process.env.FOLKLORE_BOOTSTRAP_P
 
 // Default HTTP tracker (BitTorrent-tracker rendezvous). Overridable via
 // FOLKLORE_TRACKER_URL; set to '' to run without a tracker (local/DHT-only).
-const FOLKLORE_TRACKER_URL: string = process.env.FOLKLORE_TRACKER_URL ?? 'https://usefolklore.com';
+// MUST match the deployed Pages domain — usefolklore.com is NOT ours (it
+// redirects to an unrelated site), so pointing here at the wrong host silently
+// kills discovery for every install.
+const FOLKLORE_TRACKER_URL: string = process.env.FOLKLORE_TRACKER_URL ?? 'https://usefolklore.sh';
 
 // Default circuit-relay multiaddr(s) for NAT'd leaf nodes (comma-separated).
 // A node with a relay configured reserves a slot and advertises a reachable
@@ -232,9 +256,16 @@ const ENV_RELAYS: readonly string[] = (process.env.FOLKLORE_RELAYS ?? '')
   .map((s) => s.trim())
   .filter(Boolean);
 
+// Externally-reachable multiaddrs to publish instead of the bound ones (no
+// /p2p/<id> suffix — libp2p appends it). Only an edge-fronted node needs this.
+const ENV_ANNOUNCE: readonly string[] = (process.env.FOLKLORE_ANNOUNCE ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const DEFAULT_PEER: PeerConfig = {
   port: 0,
-  listen_host: '127.0.0.1',
+  listen_host: '0.0.0.0',
   mdns: true,
   // public DHT is now OFF by default — every node used to dial the public IPFS
   // Amino bootstrappers on boot (~50s+ of WAN latency + noise). Discovery now
@@ -245,6 +276,8 @@ const DEFAULT_PEER: PeerConfig = {
   relay_server: false,
   search_rate_limit: { rate_per_sec: 10, burst: 30 },
   relays: ENV_RELAYS,
+  ws_port: 0,
+  announce: ENV_ANNOUNCE,
   upnp: true,
   bandwidth: {
     max_updates_per_sec_per_peer: 50,
@@ -385,6 +418,15 @@ export const loadConfig = (path: string): ResultAsync<AppConfig, GraphError> => 
             ? (peerRaw.relays as unknown[]).filter((x): x is string => typeof x === 'string')
             : [];
           return fromConfig.length > 0 ? fromConfig : DEFAULT_PEER.relays;
+        })(),
+        ws_port: num(peerRaw.ws_port, DEFAULT_PEER.ws_port),
+        // Same precedence rule as relays: config wins when non-empty, else the
+        // FOLKLORE_ANNOUNCE env default.
+        announce: ((): readonly string[] => {
+          const fromConfig = Array.isArray(peerRaw.announce)
+            ? (peerRaw.announce as unknown[]).filter((x): x is string => typeof x === 'string')
+            : [];
+          return fromConfig.length > 0 ? fromConfig : DEFAULT_PEER.announce;
         })(),
         upnp: bool(peerRaw.upnp, DEFAULT_PEER.upnp),
         bandwidth: {

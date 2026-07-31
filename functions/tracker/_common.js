@@ -34,6 +34,16 @@ const MULTIADDR_RE = new RegExp(
     `\\/p2p\\/${PEER_ID_PAT}$`,
 );
 
+// Non-routable literals a peer must never publish to a PUBLIC tracker:
+// loopback, unspecified, IPv4 link-local, IPv6 link-local. Storing one poisons
+// the directory — every other peer dials it against ITSELF and fails. Peers
+// filter these client-side too (tracker-client.ts announceableAddrs); this is
+// the server half of the same rule, since the tracker is open to anyone.
+const NON_ROUTABLE_RE =
+  /^\/ip4\/(127\.|0\.0\.0\.0|169\.254\.)|^\/ip6\/(::1|::)\/|^\/ip6\/fe[89ab][0-9a-f]:/i;
+
+export const isRoutableAddr = (addr) => !NON_ROUTABLE_RE.test(addr);
+
 export const kvKey = (ns, peerId) => `peer:${ns}:${peerId}`;
 export const kvPrefix = (ns) => `peer:${ns}:`;
 
@@ -63,6 +73,7 @@ export const sanitizeAddrs = (addrs, peerId) => {
     if (typeof a !== 'string' || a.length > 256) continue;
     if (!MULTIADDR_RE.test(a)) continue;
     if (!a.endsWith(`/p2p/${peerId}`)) continue;
+    if (!isRoutableAddr(a)) continue;
     if (!out.includes(a)) out.push(a);
     if (out.length >= MAX_ADDRS) break;
   }

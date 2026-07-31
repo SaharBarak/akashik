@@ -3,11 +3,14 @@ compatibility_date = "2026-06-15"
 pages_build_output_dir = "site"
 
 # Peer tracker (functions/tracker/*) — BitTorrent-style rendezvous, holds peer
-# pointers only. It needs a Workers KV namespace bound as TRACKER_KV. For a
-# Pages project the binding is configured in the dashboard, NOT here — a
-# placeholder id in wrangler.toml breaks the deploy. One-time setup:
-#   1. npx wrangler kv namespace create TRACKER_KV
-#   2. Cloudflare dashboard → Pages → folklore → Settings → Functions →
-#      KV namespace bindings → add: variable "TRACKER_KV" → the namespace above.
-# Until it's bound, /tracker/* returns 500 (handled) and discovery falls back
-# to local/LAN; the rest of the site is unaffected.
+# pointers only (peerId + dial multiaddrs, TTL-evicted). Without the KV binding
+# below every /tracker/* call returns 500 "tracker KV not bound" and WAN
+# discovery is dead — nodes fall back to mDNS/LAN only.
+#
+# The namespace is declared here so the binding travels with the repo; the
+# Pages build applies it on deploy (dashboard bindings are the fallback, not
+# the source of truth). Recreate with:
+#   npx wrangler kv namespace create TRACKER_KV
+[[kv_namespaces]]
+binding = "TRACKER_KV"
+id = "83d27a9fa41e4270b0ee77f8481dd68f"

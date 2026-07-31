@@ -287,4 +287,52 @@ describe('Phase 17: PeerConfig defaults (Plan 01 foundation)', () => {
 
     rmSync(tmp, { recursive: true, force: true });
   });
+
+  it('defaults are DIALABLE: 0.0.0.0 bind + the real tracker domain', async () => {
+    // Regression guard for the three defaults that made WAN discovery a no-op:
+    // a loopback bind (announces an address every peer dials against itself),
+    // and a tracker URL on a domain we do not own.
+    const tmp = mkdtempSync(join(tmpdir(), 'wi-cfg-'));
+    const cfgPath = join(tmp, 'config.yaml');
+    writeFileSync(cfgPath, '{}\n');
+
+    const cfg = (await loadConfig(cfgPath))._unsafeUnwrap();
+
+    assert.equal(
+      cfg.peer.listen_host,
+      '0.0.0.0',
+      'daemon must bind all interfaces — a loopback-bound daemon can never be dialled, and UPnP is a no-op on it',
+    );
+    // FOLKLORE_TRACKER_URL is read once at module load, so an operator env var
+    // legitimately wins here; only assert the shipped default when unset.
+    if (process.env.FOLKLORE_TRACKER_URL === undefined) {
+      assert.equal(
+        cfg.peer.tracker.url,
+        'https://usefolklore.sh',
+        'tracker must point at the deployed Pages domain (usefolklore.com is not ours)',
+      );
+    }
+    assert.equal(cfg.peer.tracker.namespace, 'folklore');
+    assert.equal(cfg.peer.ws_port, 0, 'only a relay listens on ws; leaves stay TCP-only');
+    assert.deepEqual(cfg.peer.announce, [], 'announce overrides are opt-in');
+
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('ws_port + announce round-trip from config.yaml (the relay profile)', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'wi-cfg-'));
+    const cfgPath = join(tmp, 'config.yaml');
+    writeFileSync(
+      cfgPath,
+      'peer:\n  ws_port: 8080\n  announce:\n    - "/dns4/folklore-relay.fly.dev/tcp/443/wss"\n  relay_server: true\n',
+    );
+
+    const cfg = (await loadConfig(cfgPath))._unsafeUnwrap();
+
+    assert.equal(cfg.peer.ws_port, 8080);
+    assert.deepEqual(cfg.peer.announce, ['/dns4/folklore-relay.fly.dev/tcp/443/wss']);
+    assert.equal(cfg.peer.relay_server, true);
+
+    rmSync(tmp, { recursive: true, force: true });
+  });
 });

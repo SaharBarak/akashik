@@ -309,6 +309,80 @@ describe('Phase 18 — Structural: dep budget + identify presence (Plan 02)', ()
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Live tier — the WebSocket relay path (two real libp2p nodes on loopback)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('WebSocket relay reservation (the CGNAT path)', async () => {
+  const { loadOrCreateIdentity, createNode } = await import(
+    '../src/infrastructure/peer-transport.js'
+  );
+  const { multiaddr } = await import('@multiformats/multiaddr');
+
+  // Mirrors the deployed topology minus the TLS edge: in production the edge
+  // terminates TLS on 443 and proxies the upgrade to exactly this plain-ws
+  // listener, so if the reservation works here it works there.
+  test('a ws-listening relay grants a reservation and the leaf advertises /p2p-circuit', async () => {
+    const idPath = async (n: string) =>
+      join(await mkdtemp(join(tmpdir(), `fk-wsrelay-${n}-`)), 'identity.json');
+
+    const relayIdRes = await loadOrCreateIdentity(await idPath('relay'));
+    assert.ok(relayIdRes.isOk());
+    const relayRes = await createNode(relayIdRes._unsafeUnwrap(), {
+      listenPort: 0,
+      wsPort: 44811,
+      listenHost: '127.0.0.1',
+      mdns: false,
+      dhtEnabled: false,
+      upnp: false,
+      relayServer: true,
+    });
+    assert.ok(relayRes.isOk(), 'relay node must start');
+    const relay = relayRes._unsafeUnwrap();
+
+    try {
+      const wsAddr = relay.getMultiaddrs().map(String).find((a) => a.includes('/ws'));
+      assert.ok(wsAddr, 'relay must expose a /ws listen address');
+
+      const leafIdRes = await loadOrCreateIdentity(await idPath('leaf'));
+      assert.ok(leafIdRes.isOk());
+      const leafRes = await createNode(leafIdRes._unsafeUnwrap(), {
+        listenPort: 0,
+        listenHost: '127.0.0.1',
+        mdns: false,
+        dhtEnabled: false,
+        upnp: false,
+        relays: [wsAddr], // reserve over WEBSOCKETS, not raw tcp
+      });
+      assert.ok(leafRes.isOk(), 'leaf node must start');
+      const leaf = leafRes._unsafeUnwrap();
+
+      try {
+        // Configuring `relays` adds the /p2p-circuit listener; the reservation
+        // itself needs a dial, which the daemon does at startup (relay pre-dial
+        // in daemon/loop.ts). Reproduce that step here.
+        await leaf.dial(multiaddr(wsAddr));
+
+        // Reservation + address advertisement are async; poll rather than sleep.
+        let circuit: string | undefined;
+        for (let i = 0; i < 40 && circuit === undefined; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          circuit = leaf.getMultiaddrs().map(String).find((a) => a.includes('/p2p-circuit'));
+        }
+        assert.ok(circuit, 'leaf must advertise a relayed address after reserving');
+        assert.ok(
+          circuit.includes('/ws'),
+          'the relayed address must carry the ws hop — that is what a CGNAT leaf publishes',
+        );
+      } finally {
+        await leaf.stop();
+      }
+    } finally {
+      await relay.stop();
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Unit tier — U1..U20
 // ─────────────────────────────────────────────────────────────────────────────
 

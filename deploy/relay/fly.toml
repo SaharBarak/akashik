@@ -2,9 +2,18 @@
 #   fly apps create folklore-relay
 #   fly volumes create folklore_data --size 1 --region <region>
 #   fly deploy
-# After deploy: capture the peerId (see README), point relay.usefolklore.com at
-# the app, and publish /dns4/relay.usefolklore.com/tcp/4103/p2p/<PEER_ID> as the
-# default FOLKLORE_RELAYS. Any Docker host works too — Fly is not required.
+# After deploy: capture the peerId (see README) and publish
+# /dns4/folklore-relay.fly.dev/tcp/443/wss/p2p/<PEER_ID> as the default
+# FOLKLORE_RELAYS. Any Docker host works too — Fly is not required.
+#
+# The listener is WebSocket-over-TLS on 443, NOT raw TCP on a custom port:
+#   - 443 is the one port that survives CGNAT, hotel wifi and corporate egress
+#     filtering, which is exactly the population a relay exists to serve;
+#   - Fly's shared/anycast IPv4 only forwards 80/443, so raw TCP on 4103 would
+#     need a dedicated IPv4. TLS terminates at the Fly edge, which proxies the
+#     WebSocket upgrade to the plain-ws listener on internal_port.
+# libp2p's own noise handshake authenticates the peer id end-to-end, so edge TLS
+# termination costs no peer-to-peer security property.
 app = "folklore-relay"
 primary_region = "iad"
 
@@ -15,13 +24,19 @@ primary_region = "iad"
   source = "folklore_data"
   destination = "/data"
 
-# Raw TCP passthrough for the libp2p listener (no HTTP, no TLS termination).
 [[services]]
   protocol = "tcp"
-  internal_port = 4103
+  internal_port = 8080
+  # Never scale a relay to zero: a leaf's reservation dies with the machine and
+  # its advertised /p2p-circuit address stays stale in the tracker until the
+  # leaf re-announces.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
 
   [[services.ports]]
-    port = 4103
+    port = 443
+    handlers = ["tls", "http"]
 
   # A relay holds MANY concurrent connections (one per NAT'd leaf + relayed
   # pairs), so the connection ceiling is higher than a plain bootstrap seed.
@@ -29,6 +44,10 @@ primary_region = "iad"
     type = "connections"
     hard_limit = 4000
     soft_limit = 3500
+
+  [[services.tcp_checks]]
+    interval = "30s"
+    timeout = "5s"
 
 [[vm]]
   size = "shared-cpu-1x"

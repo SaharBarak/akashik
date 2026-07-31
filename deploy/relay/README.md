@@ -16,9 +16,21 @@ is the "signaling" tier; this closes the reachability gap the tracker can't.
 
 A relay must hold long-lived connections. Cloudflare Workers/Pages are
 serverless — no persistent socket — so the tracker can live there but the relay
-cannot. It needs any always-on host with a public IP and an open TCP port. Fly
-is one option (config here); a $4 VPS or your own always-on machine works
-identically.
+cannot. It needs any always-on host with a public IP. Fly is one option (config
+here); a $4 VPS or your own always-on machine works identically.
+
+## Why WebSockets on 443, not raw TCP
+
+The leaves that need a relay are exactly the ones on hostile networks — CGNAT,
+hotel wifi, corporate egress filters. Those networks routinely allow 443 and
+nothing else, so the relay listens for `wss` on 443 rather than raw TCP on a
+custom port. It also removes an infrastructure cost: an anycast/shared IPv4
+(Fly's default) forwards only 80/443, so raw TCP would need a dedicated IP.
+
+TLS terminates at the edge, which proxies the WebSocket upgrade to the plain-ws
+listener inside the container (`peer.ws_port`, 8080). That costs no security
+property: libp2p's noise handshake authenticates the peer id end-to-end, so the
+edge sees an opaque encrypted stream either way.
 
 ## Deploy (Fly.io)
 
@@ -29,11 +41,14 @@ fly volumes create folklore_data --size 1 --region iad
 fly deploy
 ```
 
-Any Docker host works too:
+Any Docker host works too — put your own TLS terminator (Caddy, nginx, Cloudflare)
+in front of 8080, or expose it directly on a trusted network:
 
 ```bash
 docker build -t folklore-relay .
-docker run -p 4103:4103 -v folklore_data:/data folklore-relay
+docker run -p 8080:8080 -p 4103:4103 -v folklore_data:/data \
+  -e FOLKLORE_ANNOUNCE=/dns4/your-host.example/tcp/443/wss \
+  folklore-relay
 ```
 
 ## After first boot: publish the relay address
@@ -42,14 +57,14 @@ The node generates a stable identity on the mounted volume. Capture its peerId:
 
 ```bash
 fly logs | grep 'p2p listening'   # or: docker logs <container> | grep 'p2p listening'
-# → p2p listening: /ip4/0.0.0.0/tcp/4103/p2p/<RELAY_PEER_ID>
+# → p2p listening: /dns4/folklore-relay.fly.dev/tcp/443/wss/p2p/<RELAY_PEER_ID>
 ```
 
-Point a DNS name at the box (e.g. `relay.usefolklore.com`) and publish the relay
-multiaddr as the network default so every install reserves a slot automatically:
+Publish that multiaddr as the network default so every install reserves a slot
+automatically:
 
 ```bash
-export FOLKLORE_RELAYS="/dns4/relay.usefolklore.com/tcp/4103/p2p/<RELAY_PEER_ID>"
+export FOLKLORE_RELAYS="/dns4/folklore-relay.fly.dev/tcp/443/wss/p2p/<RELAY_PEER_ID>"
 ```
 
 or in `~/.folklore/config.yaml`:
@@ -57,8 +72,13 @@ or in `~/.folklore/config.yaml`:
 ```yaml
 peer:
   relays:
-    - "/dns4/relay.usefolklore.com/tcp/4103/p2p/<RELAY_PEER_ID>"
+    - "/dns4/folklore-relay.fly.dev/tcp/443/wss/p2p/<RELAY_PEER_ID>"
 ```
+
+A custom hostname works the same — point DNS at the app, issue a cert
+(`fly certs add relay.usefolklore.sh`), and set `peer.announce` to match. The
+announced host must be the one leaves dial, or their reservations resolve to an
+address nobody can reach.
 
 A leaf with a relay configured reserves a slot on boot; its `getMultiaddrs()`
 then includes the `/p2p-circuit` address, which the tracker-rendezvous loop
