@@ -86,7 +86,7 @@ const resolveServerCmd = (pkg: string): ServerCmd => {
 
 // ─────────────── harness registry ───────────────
 
-type Shape = 'mcpServers' | 'context_servers' | 'opencode';
+type Shape = 'mcpServers' | 'context_servers' | 'opencode' | 'openclaw';
 
 interface Harness {
   readonly id: string;
@@ -113,6 +113,20 @@ const vscodeGlobalStorage = (): string => {
   return join(home, '.config', 'Code', 'User', 'globalStorage');
 };
 
+/**
+ * OpenClaw's gateway config. Unlike the coding harnesses this is a
+ * long-running personal-agent process, and its config honours env
+ * overrides for multi-instance setups (`--dev` → `~/.openclaw-dev`,
+ * `--profile x` → `~/.openclaw-x`); we target the default instance and
+ * let OPENCLAW_CONFIG_PATH / OPENCLAW_HOME redirect us when set.
+ */
+const openclawConfig = (): string => {
+  const explicit = process.env.OPENCLAW_CONFIG_PATH;
+  if (explicit && explicit.length > 0) return explicit;
+  const base = process.env.OPENCLAW_HOME;
+  return join(base && base.length > 0 ? base : join(home, '.openclaw'), 'openclaw.json');
+};
+
 const HARNESSES: readonly Harness[] = [
   { id: 'claude-desktop', label: 'Claude Desktop', shape: 'mcpServers', configPath: claudeDesktopConfig() },
   { id: 'cursor', label: 'Cursor', shape: 'mcpServers', configPath: join(home, '.cursor', 'mcp.json') },
@@ -122,6 +136,7 @@ const HARNESSES: readonly Harness[] = [
   { id: 'roo', label: 'Roo Code', shape: 'mcpServers', configPath: join(vscodeGlobalStorage(), 'rooveterinaryinc.roo-cline', 'settings', 'mcp_settings.json') },
   { id: 'zed', label: 'Zed', shape: 'context_servers', configPath: join(home, '.config', 'zed', 'settings.json') },
   { id: 'opencode', label: 'opencode', shape: 'opencode', configPath: join(home, '.config', 'opencode', 'opencode.json') },
+  { id: 'openclaw', label: 'OpenClaw', shape: 'openclaw', configPath: openclawConfig() },
 ];
 
 /**
@@ -145,7 +160,63 @@ const parseJson = (path: string): Record<string, unknown> => {
   }
 };
 
+/**
+ * OpenClaw is the one target we do NOT hand-write, because its config is
+ * schema-validated and rejects the whole file on an unrecognised root key:
+ * writing an `mcp` block into a build that predates MCP support doesn't
+ * degrade, it stops the gateway from starting. The `mcp` block landed well
+ * after the first public builds, so "is it supported here?" is a real
+ * question rather than a formality.
+ *
+ * So we drive OpenClaw's own CLI, which writes whatever shape its version
+ * expects, and probe for the subcommand rather than parsing a version string
+ * (a capability check can't drift; a version comparison can).
+ */
+/**
+ * Does this OpenClaw build have the `mcp` subcommand?
+ *
+ * `openclaw mcp --help` exits 0 even when `mcp` doesn't exist — it falls back
+ * to printing the root banner — so the exit code proves nothing. The command
+ * list in the root help is the honest signal. Exported for tests.
+ */
+export const openclawSupportsMcp = (rootHelpStdout: string): boolean =>
+  // `\b` would also match `mcp-legacy`; the command name must END here.
+  /^\s{2}mcp(?:\s|$)/m.test(rootHelpStdout);
+
+const installOpenclaw = (cmd: ServerCmd): void => {
+  const probe = plat === 'win32'
+    ? spawnSync('where', ['openclaw'], { encoding: 'utf8' })
+    : spawnSync('command', ['-v', 'openclaw'], { encoding: 'utf8', shell: true });
+  if (probe.status !== 0) {
+    throw new Error('openclaw CLI not on PATH — install OpenClaw, then re-run');
+  }
+  const bin = (probe.stdout ?? '').split(/\r?\n/)[0]?.trim();
+  if (!bin) throw new Error('openclaw CLI not resolvable on PATH');
+
+  const rootHelp = spawnSync(bin, ['--help'], { encoding: 'utf8' });
+  if (!openclawSupportsMcp(rootHelp.stdout ?? '')) {
+    const ver = (spawnSync(bin, ['--version'], { encoding: 'utf8' }).stdout ?? '').trim();
+    throw new Error(
+      `this OpenClaw build${ver ? ` (${ver})` : ''} has no MCP support — run \`openclaw update\` first`,
+    );
+  }
+
+  const args = ['mcp', 'add', SERVER_NAME, '--command', cmd.command];
+  for (const a of cmd.args) args.push('--arg', a);
+  const add = spawnSync(bin, args, { encoding: 'utf8' });
+  if (add.status === 0) return;
+
+  // Re-running the installer must be a no-op, not a failure.
+  const err = `${add.stderr ?? ''}${add.stdout ?? ''}`;
+  if (/already exists|duplicate/i.test(err)) return;
+  throw new Error(err.split(/\r?\n/).find((l) => l.trim().length > 0)?.trim() ?? 'openclaw mcp add failed');
+};
+
 const writeFor = (h: Harness, cmd: ServerCmd): void => {
+  if (h.shape === 'openclaw') {
+    installOpenclaw(cmd);
+    return;
+  }
   const cfg = parseJson(h.configPath);
 
   if (h.shape === 'opencode') {
