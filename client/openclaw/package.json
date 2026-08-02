@@ -1,0 +1,30 @@
+{
+  "name": "@usefolklore/openclaw-plugin",
+  "version": "0.1.0",
+  "description": "Federated knowledge-graph memory for OpenClaw — answers from your graph and connected peers before the web.",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "openclaw": {
+    "extensions": ["./src/index.ts"],
+    "runtimeExtensions": ["./dist/index.js"]
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --import tsx --test test/*.test.ts",
+    "lint": "eslint src test"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.0"
+  },
+  "devDependencies": {
+    "openclaw": "2026.7.1-2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "keywords": ["openclaw", "openclaw-plugin", "memory", "folklore", "p2p", "knowledge-graph"]
+}

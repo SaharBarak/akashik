@@ -1,0 +1,9 @@
+{
+  "id": "folklore",
+  "name": "folklore",
+  "description": "Federated knowledge-graph memory. Answers from your own graph and connected peers before the web.",
+  "kind": "native",
+  "contracts": {
+    "activation": ["memory"]
+  }
+}

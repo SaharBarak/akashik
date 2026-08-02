@@ -24,7 +24,7 @@ import type { HandlerResult, IpcHandler } from './ipc.js';
 import { formatError } from '../domain/errors.js';
 import { ask } from '../application/ask.js';
 import { executeFederatedAsk, formatFederatedAsk } from '../application/federated-ask.js';
-import { upsertEdge } from '../domain/graph.js';
+import { getNode, upsertEdge } from '../domain/graph.js';
 import { indexNode as indexNodeUseCase } from '../application/use-cases.js';
 import { queryCache, type QueryCache } from '../domain/query-cache.js';
 import { semanticCache, type SemanticCache } from '../domain/semantic-cache.js';
@@ -537,12 +537,42 @@ const metricsHandler: IpcHandler<Runtime> =
     return { stdout: JSON.stringify(snap) + '\n', exit: 0 };
   };
 
+/**
+ * `get <node-id> [--json]` handler — retrieval by id, the second half of the
+ * search contract. `ask` returns snippets and ids; something has to turn an id
+ * back into the document, and consumers that aren't MCP clients (hooks, the
+ * OpenClaw corpus supplement) had no way to do it.
+ *
+ * Read-only, so it satisfies the registry invariants. Exit 2 distinguishes
+ * "no such node" from "graph unreadable" (exit 1) — a caller retrying the
+ * latter is sensible, retrying the former is not.
+ */
+const getHandler: IpcHandler<Runtime> = async (args, runtime): Promise<HandlerResult> => {
+  const nodeId = args.find((a) => !a.startsWith('--'));
+  if (!nodeId) {
+    return { stdout: '', stderr: 'get: missing node id\n', exit: 1 };
+  }
+  const graphRes = await runtime.graphs.load();
+  if (graphRes.isErr()) {
+    return { stdout: '', stderr: `get: ${formatError(graphRes.error)}\n`, exit: 1 };
+  }
+  const node = getNode(graphRes.value, nodeId);
+  if (!node) {
+    return {
+      stdout: JSON.stringify({ error: 'NodeNotFound', node_id: nodeId }) + '\n',
+      exit: 2,
+    };
+  }
+  return { stdout: JSON.stringify(node) + '\n', exit: 0 };
+};
+
 export const buildIpcHandlers = (queue?: JobQueue, federation?: FederationRef): Map<string, IpcHandler<Runtime>> => {
   const h = new Map<string, IpcHandler<Runtime>>();
   h.set('ask', makeAskHandler(federation));
   h.set('stats', statsHandler);
   h.set('cache-stats', cacheStatsHandler);
   h.set('metrics', metricsHandler);
+  h.set('get', getHandler);
   if (queue) {
     h.set('submit-job', submitJobHandler(queue));
     h.set('jobs-list', jobsListHandler(queue));
