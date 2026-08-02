@@ -104,6 +104,36 @@ export const startIpcServer = async <C>(
   const server: Server = createServer((socket: Socket) => {
     socket.on('error', (e) => onError(`ipc: socket error: ${e.message}`));
     const rl = createInterface({ input: socket });
+    // A readline Interface RE-EMITS its input stream's 'error' on itself, and
+    // an 'error' with no listener is an unhandled exception that takes the
+    // process down. The socket handler above does NOT cover this: the error
+    // arrives on the Interface, not the Socket.
+    //
+    // This is reachable by any client that hangs up before we answer — a
+    // caller with a request timeout, a Ctrl-C'd CLI — because the write below
+    // then fails EPIPE asynchronously. In other words, a client giving up
+    // could kill the daemon.
+    rl.on('error', (e: Error) => onError(`ipc: reader error: ${e.message}`));
+
+    /**
+     * Write one response, tolerating a client that has already gone.
+     *
+     * The bare `try { socket.write(…) } catch {}` this replaces only caught
+     * SYNCHRONOUS throws; a write to a half-closed pipe fails asynchronously,
+     * which is the case that actually happens. Checking `writable` first skips
+     * the doomed write entirely, and the error callback absorbs the race
+     * between the check and the flush.
+     */
+    const reply = (resp: IpcResponse): void => {
+      if (socket.destroyed || !socket.writable) return;
+      try {
+        socket.write(JSON.stringify(resp) + '\n', (e) => {
+          if (e) onError(`ipc: reply dropped (${e.message})`);
+        });
+      } catch (e) {
+        onError(`ipc: reply failed (${(e as Error).message})`);
+      }
+    };
     // Named async handler + void-wrapped registration: every await in
     // the body is try/caught, so the promise cannot reject — the
     // wrapper just keeps the EventEmitter contract synchronous.
@@ -115,7 +145,7 @@ export const startIpcServer = async <C>(
         req = JSON.parse(line) as IpcRequest;
       } catch (e) {
         const resp: IpcResponse = { id: 0, ok: false, stderr: `ipc: bad json: ${(e as Error).message}`, exit: 1 };
-        try { socket.write(JSON.stringify(resp) + '\n'); } catch { /* peer gone */ }
+        reply(resp);
         return;
       }
 
@@ -127,7 +157,7 @@ export const startIpcServer = async <C>(
           stderr: IPC_FALLBACK_SENTINEL,
           exit: 255,
         };
-        try { socket.write(JSON.stringify(resp) + '\n'); } catch { /* peer gone */ }
+        reply(resp);
         return;
       }
 
@@ -141,7 +171,7 @@ export const startIpcServer = async <C>(
           stderr: result.stderr,
           exit: result.exit,
         };
-        try { socket.write(JSON.stringify(resp) + '\n'); } catch { /* peer gone */ }
+        reply(resp);
         onCommand(req.cmd, req.args.length, Date.now() - t0);
       } catch (e) {
         const resp: IpcResponse = {
@@ -150,7 +180,7 @@ export const startIpcServer = async <C>(
           stderr: `ipc handler '${req.cmd}': ${(e as Error).message}`,
           exit: 1,
         };
-        try { socket.write(JSON.stringify(resp) + '\n'); } catch { /* peer gone */ }
+        reply(resp);
       }
     };
     rl.on('line', (line) => { void onLine(line); });
