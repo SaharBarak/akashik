@@ -198,15 +198,36 @@ const run = async (): Promise<number> => {
   });
   console.log(`daemon: ipc listening on ${ipc.path}`);
 
-  // Pre-warm the embedder so the first IPC `ask` isn't the one that
-  // eats the 200 ms ONNX load. Best-effort — on failure we just log,
-  // the first real query will warm it lazily.
-  void rt.value.embedder.embed('folklore daemon warm').then(
-    (r) => {
+  // Pre-warm everything the first query would otherwise pay for, so no client
+  // is ever the one that triggers initialisation.
+  //
+  // The embedder warm below has been here a while, but it left the far larger
+  // cost unwarmed: the graph. Loading it is a synchronous parse of the whole
+  // graph.json (measured 3.1s on a 102k-node / 720k-edge graph, ~358 MB), and
+  // it happened lazily inside whichever IPC request arrived first. That request
+  // then took seconds while every subsequent one took ~3 ms.
+  //
+  // A caller with a short timeout never sees the fast path: it gives up during
+  // the load, and the next call restarts the wait — so a busy daemon can look
+  // permanently unresponsive while actually being idle. Warming here converts
+  // "the first caller pays, repeatedly" into "the daemon pays once, before
+  // anyone asks".
+  //
+  // Best-effort and un-awaited: a warm failure must not stop the daemon, and
+  // the lazy path still works as the fallback.
+  const warmStart = Date.now();
+  void Promise.allSettled([
+    rt.value.embedder.embed('folklore daemon warm').then((r) => {
       if (r.isErr()) console.error(`daemon: embedder pre-warm failed: ${formatError(r.error)}`);
-    },
-    () => { /* swallow */ },
-  );
+    }),
+    rt.value.graphs.load().then((r) => {
+      if (r.isErr()) console.error(`daemon: graph pre-warm failed: ${formatError(r.error)}`);
+    }),
+  ]).then(() => {
+    const ms = Date.now() - warmStart;
+    console.log(`daemon: warm in ${ms}ms — queries now served from memory`);
+    daemonLog(paths.home, `warm in ${ms}ms (graph + embedder pre-loaded)`);
+  });
 
   const loop: LoopHandle = await startLoop({
     ingestDeps: rt.value.ingestDeps,
