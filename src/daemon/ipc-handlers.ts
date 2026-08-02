@@ -25,6 +25,8 @@ import { formatError } from '../domain/errors.js';
 import { ask } from '../application/ask.js';
 import { executeFederatedAsk, formatFederatedAsk } from '../application/federated-ask.js';
 import { getNode, upsertEdge } from '../domain/graph.js';
+import { answerDocsOf, isResolvedQuery } from '../domain/query-reuse.js';
+import { DEFAULT_MAX_DISTANCE } from '../cli/commands/reuse.js';
 import { indexNode as indexNodeUseCase } from '../application/use-cases.js';
 import { queryCache, type QueryCache } from '../domain/query-cache.js';
 import { semanticCache, type SemanticCache } from '../domain/semantic-cache.js';
@@ -566,6 +568,69 @@ const getHandler: IpcHandler<Runtime> = async (args, runtime): Promise<HandlerRe
   return { stdout: JSON.stringify(node) + '\n', exit: 0 };
 };
 
+/**
+ * `reuse lookup <question> --json` handler — the read half of inference reuse.
+ *
+ * Read-only, so it satisfies the registry invariants. The write half
+ * (`reuse record`) deliberately stays spawn-only: it mutates the graph, and
+ * mutating commands are not served over IPC.
+ */
+const reuseHandler: IpcHandler<Runtime> = async (args, runtime): Promise<HandlerResult> => {
+  if (args[0] !== 'lookup') {
+    return { stdout: '', stderr: IPC_FALLBACK_SENTINEL, exit: 255 };
+  }
+  const rest = args.slice(1);
+  const flag = (name: string): string | undefined => {
+    const i = rest.indexOf(name);
+    return i >= 0 ? rest[i + 1] : undefined;
+  };
+  const skip = new Set(['--max-distance', '--k']);
+  const words: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (skip.has(a)) { i++; continue; }
+    if (a.startsWith('--')) continue;
+    words.push(a);
+  }
+  const question = words.join(' ').trim();
+  if (!question) return { stdout: '', stderr: 'reuse: missing question\n', exit: 1 };
+  const maxDistance = Number(flag('--max-distance') ?? DEFAULT_MAX_DISTANCE);
+  const k = Number(flag('--k') ?? 20);
+
+  const emb = await runtime.embedder.embed(question);
+  if (emb.isErr()) return { stdout: '', stderr: `reuse: ${formatError(emb.error)}\n`, exit: 1 };
+  const matches = await runtime.vectors.searchGlobal(emb.value, k);
+  if (matches.isErr()) return { stdout: '', stderr: `reuse: ${formatError(matches.error)}\n`, exit: 1 };
+  const graphRes = await runtime.graphs.load();
+  if (graphRes.isErr()) return { stdout: '', stderr: `reuse: ${formatError(graphRes.error)}\n`, exit: 1 };
+
+  const graph = graphRes.value;
+  const now = Date.now();
+  const hits = [];
+  for (const m of matches.value) {
+    const node = getNode(graph, m.node_id);
+    if (!node || !isResolvedQuery(node)) continue;
+    const trace = (node as { summary?: string }).summary ?? '';
+    if (trace.trim().length === 0) continue;
+    if (m.distance > maxDistance) continue;
+    const resolvedAt = (node as { fetched_at?: string }).fetched_at ?? null;
+    hits.push({
+      id: node.id,
+      question: node.label ?? node.id,
+      distance: m.distance,
+      trace,
+      answer_docs: answerDocsOf(node),
+      resolved_at: resolvedAt,
+      age_days: resolvedAt ? (now - Date.parse(resolvedAt)) / 86_400_000 : null,
+    });
+  }
+  hits.sort((a, b) => a.distance - b.distance);
+  return {
+    stdout: JSON.stringify({ question, max_distance: maxDistance, hits }) + '\n',
+    exit: 0,
+  };
+};
+
 export const buildIpcHandlers = (queue?: JobQueue, federation?: FederationRef): Map<string, IpcHandler<Runtime>> => {
   const h = new Map<string, IpcHandler<Runtime>>();
   h.set('ask', makeAskHandler(federation));
@@ -573,6 +638,7 @@ export const buildIpcHandlers = (queue?: JobQueue, federation?: FederationRef): 
   h.set('cache-stats', cacheStatsHandler);
   h.set('metrics', metricsHandler);
   h.set('get', getHandler);
+  h.set('reuse', reuseHandler);
   if (queue) {
     h.set('submit-job', submitJobHandler(queue));
     h.set('jobs-list', jobsListHandler(queue));

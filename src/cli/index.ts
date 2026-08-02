@@ -65,6 +65,7 @@ import { resume } from './commands/resume.js';
 import { live } from './commands/live.js';
 import { relay } from './commands/relay.js';
 import { get } from './commands/get.js';
+import { reuse } from './commands/reuse.js';
 
 type CommandFn = (args: string[]) => Promise<number> | number;
 
@@ -95,6 +96,7 @@ const commands: Record<string, CommandFn> = {
   peer,
   relay,
   get,
+  reuse,
   share,
   unshare,
   touch,

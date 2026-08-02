@@ -27,6 +27,7 @@ ask + save (daily loop):
   save --label X --text Y file a typed node (--type synthesis|concept|decision, --private)
   recall <name>           entity-first lookup across the graph (+ connected peers)
   get <node-id>           print one node by its exact id (--json for the raw record)
+  reuse lookup|record     inference reuse — serve a stored answer instead of re-asking
   remember --transcript P distill a session transcript into one embedded memory node
   resume [--workspace W]   print the latest "where you left off" digest for this repo
   hot                     today's working set — recently touched nodes

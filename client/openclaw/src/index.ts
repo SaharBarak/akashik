@@ -28,6 +28,7 @@ import {
   gateFromEnv,
   queryFromParams,
 } from './gate.js';
+import { decideReuse, lookupReuse, reuseFromEnv, reuseMessage } from './reuse.js';
 
 const PLUGIN_ID = 'folklore';
 
@@ -89,6 +90,40 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
         };
       },
     );
+
+    // ── compound inference ──────────────────────────────────────────────
+    // Answer from a peer's stored reasoning instead of calling a model. Off
+    // unless FOLKLORE_REUSE_INFERENCE=1: the threshold separating "the same
+    // question reworded" from "a different question about the same subject"
+    // is not yet calibrated, and answering the wrong question confidently is
+    // worse than paying for inference.
+    const reuseCfg = reuseFromEnv();
+    if (reuseCfg.enabled) {
+      log.info?.(
+        `[${PLUGIN_ID}] inference reuse ON (max distance ${reuseCfg.maxDistance}, ` +
+          `max age ${reuseCfg.maxAgeDays}d) — turns may be answered without a model call`,
+      );
+      api.on('before_agent_run', async (event) => {
+        const hits = await lookupReuse(event.prompt ?? '', reuseCfg);
+        if (!hits) return; // no daemon, no opinion — run the model
+
+        const decision = decideReuse(hits, reuseCfg);
+        if (!decision.reuse) {
+          log.debug?.(`[${PLUGIN_ID}] no reuse — ${decision.reason}`);
+          return;
+        }
+
+        log.info?.(
+          `[${PLUGIN_ID}] answered without inference (${decision.reason}) from ${decision.hit.id}`,
+        );
+        return {
+          outcome: 'block' as const,
+          reason: `folklore: reused a stored answer (${decision.reason})`,
+          message: reuseMessage(decision.hit),
+          category: 'cache_hit',
+        };
+      });
+    }
 
     // A daemon that has been up for weeks runs whatever folklore was installed
     // when it started. `get` is newer than `ask`, so an old daemon serves
