@@ -31,7 +31,47 @@ interface FolkloreHit {
 interface FolkloreAsk {
   readonly hits?: readonly FolkloreHit[];
   readonly satisfaction?: number;
+  readonly decision?: string;
 }
+
+/** What the web gate needs: the verdict plus something to show the agent. */
+export interface AskVerdict {
+  readonly decision: string | null;
+  readonly satisfaction: number | null;
+  readonly hitCount: number;
+  readonly rendered: string;
+}
+
+/** Render hits the way folklore's own hook does — label, age, distance. */
+const renderHits = (hits: readonly FolkloreHit[]): string =>
+  hits
+    .map((h) => {
+      const age = typeof h.age_days === 'number' ? ` [${Math.round(h.age_days)}d]` : '';
+      const dist = typeof h.distance === 'number' ? ` d=${h.distance.toFixed(2)}` : '';
+      const body = (h.snippet ?? h.summary ?? '').replace(/\s+/g, ' ').slice(0, 300);
+      return `- ${h.label ?? h.id}${age}${dist}\n  ${body}\n  ${h.source_uri ?? h.id}`;
+    })
+    .join('\n');
+
+/**
+ * Ask the graph and return the gate-relevant verdict. Null on any failure, so
+ * a missing daemon means "no opinion" — the web call proceeds untouched.
+ */
+export const askVerdict = async (
+  query: string,
+  k = 5,
+  timeoutMs?: number,
+): Promise<AskVerdict | null> => {
+  const res = await ipcJson<FolkloreAsk>('ask', [query, '--json', '--k', String(k)], timeoutMs);
+  if (!res) return null;
+  const hits = Array.isArray(res.hits) ? res.hits : [];
+  return {
+    decision: typeof res.decision === 'string' ? res.decision : null,
+    satisfaction: typeof res.satisfaction === 'number' ? res.satisfaction : null,
+    hitCount: hits.length,
+    rendered: renderHits(hits),
+  };
+};
 
 interface FolkloreNode {
   readonly id: string;
