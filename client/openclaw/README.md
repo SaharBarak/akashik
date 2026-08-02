@@ -47,6 +47,13 @@ If you upgrade folklore, restart the daemon. A long-running daemon serves
 whatever version it started with, and the plugin will warn you if it finds one
 too old to answer a retrieval.
 
+**A cold daemon takes a couple of minutes before it answers.** It loads the
+graph and the vector index first, and does not serve IPC until that finishes —
+measured at ~150 s on a graph of ~96k vectors. During that window memory
+searches return empty rather than blocking the agent's turn, which is the right
+trade for a hook that sits in front of every message. If you run both under
+Docker, start the folklore service first.
+
 ## What leaves your machine
 
 **Nothing personal. Ever.** This is the part worth reading carefully.
