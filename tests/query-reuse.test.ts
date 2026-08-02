@@ -13,6 +13,7 @@ import {
   isResolvedQuery,
   answerDocsOf,
   expandResolvedQueries,
+  RESOLVED_TRACE_MAX_CHARS,
 } from '../src/domain/query-reuse.ts';
 import type { Match } from '../src/domain/vectors.ts';
 
@@ -31,10 +32,31 @@ describe('query-reuse — resolved-query node helpers', () => {
   });
 
   it('makeResolvedQueryNode is recognized and carries its answer docs', () => {
-    const n = makeResolvedQueryNode('what is X', ['doc-1', 'doc-2']);
+    const n = makeResolvedQueryNode(
+      'what is X',
+      ['doc-1', 'doc-2'],
+      { summary: 'Compare X with the verified evidence.', resolvedAt: '2026-07-15T00:00:00.000Z' },
+    );
     assert.ok(isResolvedQuery(n));
     assert.deepEqual([...answerDocsOf(n)], ['doc-1', 'doc-2']);
+    assert.equal(n.summary, 'Compare X with the verified evidence.');
+    assert.equal(n.fetched_at, '2026-07-15T00:00:00.000Z');
+    assert.equal(n.private, false, 'resolved traces must be eligible for federation');
     assert.ok(!isResolvedQuery(doc('doc-1') as never));
+  });
+
+  it('keeps raw question-only reuse pointers private and bounds distilled bodies to the wire cap', () => {
+    const rawQuestion = makeResolvedQueryNode('private user prompt', ['doc-1']);
+    assert.equal(rawQuestion.private, true);
+    assert.equal(rawQuestion.summary, undefined);
+
+    const traced = makeResolvedQueryNode(
+      'public distilled strategy',
+      ['doc-1'],
+      { summary: 'x'.repeat(RESOLVED_TRACE_MAX_CHARS + 100), resolvedAt: '2026-07-15T00:00:00.000Z' },
+    );
+    assert.equal(traced.private, false);
+    assert.equal((traced.summary as string).length, RESOLVED_TRACE_MAX_CHARS);
   });
 });
 

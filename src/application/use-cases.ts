@@ -127,8 +127,21 @@ export const indexNode =
  */
 export const recordResolvedQuery =
   (deps: UseCaseDeps) =>
-  (cmd: { readonly query: string; readonly answerDocIds: readonly NodeId[] }): ResultAsync<Graph, AppError> =>
-    indexNode(deps)({ node: makeResolvedQueryNode(cmd.query, cmd.answerDocIds), text: cmd.query });
+  (cmd: {
+    readonly query: string;
+    readonly answerDocIds: readonly NodeId[];
+    readonly trace?: string;
+    readonly resolvedAt?: string;
+  }): ResultAsync<Graph, AppError> => {
+    const trace = cmd.trace
+      ? { summary: cmd.trace, resolvedAt: cmd.resolvedAt ?? new Date().toISOString() }
+      : undefined;
+    const node = makeResolvedQueryNode(cmd.query, cmd.answerDocIds, trace);
+    // The vector is deliberately question-only: query-to-query retrieval is
+    // the reuse signal. The trace body remains available to rerankers and the
+    // fetch protocol without diluting that embedding.
+    return indexNode(deps)({ node, text: cmd.query });
+  };
 
 // ─────────────────────── searchGlobal ─────────────────────
 

@@ -3,10 +3,12 @@
  *
  * A peer that resolves a query records a "resolved-query" node: the question
  * text (embedded, so it's searchable) linked to the verified answer-doc node
- * ids. These nodes live in the same graph + vector store and federate over the
- * existing CRDT, so a later (possibly paraphrased) query naturally retrieves
- * them by query↔query similarity — which is far stronger than query↔doc for the
- * same information need (measured ≈0.71–0.84 vs ~0.35–0.47 recall@1).
+ * ids. These nodes live in the same graph + vector store. When an explicitly
+ * distilled trace is attached, its public pointer is CRDT-eligible; federated
+ * search discovers it and targeted fetch carries the self-contained body. Raw
+ * questions without a trace stay private. A later (possibly paraphrased) query
+ * retrieves prior work by query↔query similarity — which is far stronger than
+ * query↔doc for the same need (measured ≈0.71–0.84 vs ~0.35–0.47 recall@1).
  *
  * `expandResolvedQueries` is the read-time hook: when a search match lands on a
  * resolved-query node ("someone already answered this"), it is replaced by its
@@ -27,6 +29,8 @@ import type { Match } from './vectors.js';
 
 /** Marker `kind` on a resolved-query node (an extra field on GraphNode). */
 export const RESOLVED_QUERY_KIND = 'resolved_query';
+/** Bounded by the fetch/import wire contract. */
+export const RESOLVED_TRACE_MAX_CHARS = 4000;
 
 /** Deterministic id for a query's resolved-query node (normalized text). */
 export const resolvedQueryId = (query: string): NodeId =>
@@ -41,17 +45,44 @@ export const answerDocsOf = (n: GraphNode): readonly NodeId[] => {
   return Array.isArray(a) ? (a.filter((x) => typeof x === 'string') as NodeId[]) : [];
 };
 
-/** Build a resolved-query node: the question, linked to its verified docs. */
-export const makeResolvedQueryNode = (query: string, answerDocs: readonly NodeId[]): GraphNode =>
-  ({
-    id: resolvedQueryId(query),
+export interface ResolvedQueryTrace {
+  /** Model-agnostic, provider-output-free reasoning that another peer can reuse. */
+  readonly summary: string;
+  /** Resolution time supplied by the application boundary. */
+  readonly resolvedAt: string;
+}
+
+/**
+ * Build a resolved-query node: the question, linked to its verified docs and,
+ * when supplied, carrying a self-contained distilled trace.
+ *
+ * `fetched_at` is explicit because the import boundary requires it. Public
+ * federation is opt-in at the distilled-trace boundary: a trace-bearing node
+ * is public, while a raw question-only reuse pointer stays private.
+ */
+export const makeResolvedQueryNode = (
+  query: string,
+  answerDocs: readonly NodeId[],
+  trace?: ResolvedQueryTrace,
+): GraphNode => {
+  const id = resolvedQueryId(query);
+  return ({
+    id,
     label: query.trim(),
     file_type: 'rationale',
-    source_file: resolvedQueryId(query),
+    source_file: id,
     kind: RESOLVED_QUERY_KIND,
     answer_docs: [...answerDocs],
-    source_uri: resolvedQueryId(query),
+    source_uri: id,
+    private: trace?.summary ? false : true,
+    ...(trace?.summary
+      ? {
+          summary: trace.summary.slice(0, RESOLVED_TRACE_MAX_CHARS),
+          fetched_at: trace.resolvedAt,
+        }
+      : {}),
   }) as unknown as GraphNode;
+};
 
 /**
  * Replace resolved-query matches with their verified answer-doc matches.
