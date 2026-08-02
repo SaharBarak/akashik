@@ -13,7 +13,7 @@
  * layer can compose I/O and domain failures in a single chain.
  */
 
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { ResultAsync, errAsync, okAsync } from 'neverthrow';
@@ -44,10 +44,11 @@ export interface GraphRepository {
  *   - On any read or parse error, the cache is cleared and the
  *     next load re-reads from disk.
  *
- * The TTL is short (200ms) on purpose: any caller that mutates the
- * graph through save() invalidates immediately; the TTL only
- * affects READ-ONLY callers that happen to call load() multiple
- * times in quick succession (the dedupe path, search ranking, etc.).
+ * Past the TTL the cache is REVALIDATED rather than discarded: an
+ * mtime+size stamp that still matches means the parse is still good.
+ * A pure 200ms TTL made a long-lived daemon re-parse on essentially
+ * every request (2.2s on a 358MB graph) even though it is the only
+ * writer and had changed nothing.
  *
  * In-process only — the cross-process write lock guarantees no
  * other process is mutating the file while ours holds the lock,
@@ -57,20 +58,56 @@ const CACHE_TTL_MS = 200;
 
 import { metrics } from '../domain/metrics.js';
 
+/**
+ * Cheap identity of the file on disk: same mtime AND same size means the bytes
+ * we parsed are still the bytes there. statSync costs microseconds against a
+ * re-parse costing seconds, so it is worth doing on every load.
+ *
+ * Returns null when the file is missing or unstattable, which forces a miss —
+ * failing towards a re-read is always safe, a stale hit is not.
+ */
+const fileStamp = (path: string): string | null => {
+  try {
+    const st = statSync(path);
+    return `${st.mtimeMs}:${st.size}`;
+  } catch {
+    return null;
+  }
+};
+
 export const fileGraphRepository = (path: string): GraphRepository => {
-  let cache: { graph: Graph; ts: number } | null = null;
+  let cache: { graph: Graph; ts: number; stamp: string | null } | null = null;
 
   const load = (): ResultAsync<Graph, GraphError> => {
     const now = Date.now();
+    // Within the TTL, trust the cache without touching the filesystem at all.
     if (cache && now - cache.ts < CACHE_TTL_MS) {
       metrics.counter('graph.load.cache_hit').inc();
       return okAsync(cache.graph);
+    }
+    // Past the TTL the cached parse is still valid as long as the file has not
+    // changed — and on a daemon it usually has not, because the daemon is the
+    // only writer (the cross-process lock guarantees it) and reads vastly
+    // outnumber writes.
+    //
+    // Without this check, a 200 ms TTL means essentially every request pays a
+    // full re-parse: measured 2.2 s on a 358 MB graph, versus 3 ms on a hit.
+    // That is the difference between a memory lookup a hook can sit in front
+    // of and one it cannot.
+    if (cache) {
+      const stamp = fileStamp(path);
+      if (stamp !== null && stamp === cache.stamp) {
+        cache = { ...cache, ts: now };
+        metrics.counter('graph.load.cache_hit').inc();
+        metrics.counter('graph.load.stamp_revalidated').inc();
+        return okAsync(cache.graph);
+      }
     }
     metrics.counter('graph.load.cache_miss').inc();
     const t0 = performance.now();
     if (!existsSync(path)) {
       const g = empty();
-      cache = { graph: g, ts: now };
+      cache = { graph: g, ts: now, stamp: fileStamp(path) };
       metrics.histogram('graph.load.ms').observe(performance.now() - t0);
       return okAsync(g);
     }
@@ -82,7 +119,7 @@ export const fileGraphRepository = (path: string): GraphRepository => {
       try {
         const parsed = JSON.parse(text);
         return fromJson(parsed, path).map((g) => {
-          cache = { graph: g, ts: Date.now() };
+          cache = { graph: g, ts: Date.now(), stamp: fileStamp(path) };
           metrics.histogram('graph.load.ms').observe(performance.now() - t0);
           return g;
         });
@@ -118,7 +155,7 @@ export const fileGraphRepository = (path: string): GraphRepository => {
       // Write-through: the just-saved graph IS the freshest state.
       // Subsequent load() returns it without re-reading + re-parsing
       // the file we just wrote.
-      cache = { graph, ts: Date.now() };
+      cache = { graph, ts: Date.now(), stamp: fileStamp(path) };
       metrics.histogram('graph.save.ms').observe(performance.now() - t0);
       metrics.counter('graph.save.ok').inc();
       return okAsync(undefined);
