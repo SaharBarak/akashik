@@ -34,8 +34,6 @@
 import { Result, ResultAsync, errAsync, okAsync } from 'neverthrow';
 import type { AppError } from '../domain/errors.js';
 import type { ContentItem } from '../domain/content.js';
-import type { Graph } from '../domain/graph.js';
-import { getNode } from '../domain/graph.js';
 import type { Source, SourceDescriptor, SourceRun, IngestTickRun } from '../domain/sources.js';
 import { emptyRun, isEnabled } from '../domain/sources.js';
 import type { GraphRepository } from '../infrastructure/graph-repository.js';
@@ -44,10 +42,8 @@ import type { Embedder } from '../infrastructure/embedders.js';
 import type { SourcesConfig } from '../infrastructure/sources-config.js';
 import type { SourceRegistry } from '../infrastructure/sources/registry.js';
 import type { AsyncMutex } from '../infrastructure/async-mutex.js';
-import { hashContent } from '../infrastructure/http/fetcher.js';
-// indexNode use-case is no longer the per-chunk path (we batch
-// embed + upsert in indexChunksFor for an order-of-magnitude speedup);
-// kept exported in use-cases.ts for any single-node callers.
+// Chunk/embed/upsert lives in batch-ingest.ts — this module fetches and
+// delegates. indexNode stays exported from use-cases.ts for single-node callers.
 
 // ─────────────────────── deps ─────────────────────────────
 
@@ -180,9 +176,23 @@ export const triggerRoom =
 // ─────────────────────── internals ────────────────────────
 
 /**
- * Walk a fetched ContentItem list, dedup against the graph, chunk
- * the new / updated ones, and call indexNode for every chunk. Returns
- * a SourceRun with the aggregated counts.
+ * Hand a source's whole fetched batch to `ingestBatch` in ONE call.
+ *
+ * This used to walk the items one at a time, and because the per-item path
+ * delegates to `ingestBatch` with a single-element array, each item paid a
+ * full `graph.save()` — a synchronous `JSON.stringify` plus write of the
+ * ENTIRE graph. That cost scales with the graph, not the item: measured at
+ * 900 ms per save on a 358 MB graph (355 ms stringify + 545 ms write), so a
+ * 15-item source blocked the event loop for ~13 s and a 40-item source for
+ * ~36 s. During those windows the daemon answered no IPC at all — it looked
+ * hung while doing exactly what it was told.
+ *
+ * `ingestBatch` already hashes, dedupes against existing content hashes,
+ * classifies new/updated/skipped and saves exactly once for the batch, so
+ * passing the whole list is both faster and less code: the per-item classify
+ * here was a second implementation of the dedupe that batch already does.
+ *
+ * N saves become 1 per source.
  */
 const processItems = (
   deps: IngestDeps,
@@ -196,143 +206,19 @@ const processItems = (
     });
   }
 
-  return deps.graphs
-    .load()
-    .mapErr((e): AppError => e)
-    .andThen((graph) =>
-      sequenceLazy(
-        items.map((item) => () =>
-          classifyItem(item, graph).andThen((decision) =>
-            actOnDecision(deps, descriptor, item, decision),
-          ),
-        ),
-      ).map((decisions) => aggregateRun(descriptor, items.length, decisions)),
-    );
-};
-
-/**
- * Given an item, compare its content hash against the existing node
- * (if any) and decide what to do.
- */
-type ItemDecision =
-  | { readonly kind: 'new' }
-  | { readonly kind: 'updated'; readonly old_hash: string }
-  | { readonly kind: 'skipped' };
-
-const classifyItem = (
-  item: ContentItem,
-  graph: Graph,
-): ResultAsync<ItemDecision, AppError> =>
-  hashContent(item.text)
-    .mapErr((e): AppError => e)
-    .map((newHash): ItemDecision => {
-      // Look up the existing node — try the source_uri first
-      // (single-chunk case where node.id === source_uri), then fall
-      // back to chunk-0 (multi-chunk case where the file's content
-      // hash lives on every chunk node). Without this fallback,
-      // every multi-chunk re-ingest looked like a brand-new item
-      // and re-embedded everything, breaking dedupe completely —
-      // one large markdown file would take ~30s on every save.
-      const existing =
-        getNode(graph, item.source_uri) ??
-        getNode(graph, `${item.source_uri}#chunk-0`);
-      if (!existing) return { kind: 'new' };
-      const oldHash = existing.content_sha256 as string | undefined;
-      if (!oldHash) return { kind: 'updated', old_hash: '<missing>' };
-      if (oldHash === newHash) return { kind: 'skipped' };
-      return { kind: 'updated', old_hash: oldHash };
-    });
-
-/**
- * Apply the decision: new/updated → chunk, embed, upsert; skipped → no-op.
- * The returned value is a simple discriminator the aggregator counts.
- */
-const actOnDecision = (
-  deps: IngestDeps,
-  descriptor: SourceDescriptor,
-  item: ContentItem,
-  decision: ItemDecision,
-): ResultAsync<ItemDecision['kind'], AppError> => {
-  if (decision.kind === 'skipped') return okAsync('skipped' as const);
-  return hashContent(item.text)
-    .mapErr((e): AppError => e)
-    .andThen((hash) => indexChunksFor(deps, descriptor, item, hash).map(() => decision.kind));
-};
-
-/**
- * Index every chunk of one item — fast path. Was N graph load+save
- * round-trips per item, now ONE per item:
- *
- *   1. Parallel `embedder.embed()` for all chunks at once. The
- *      batchingEmbedder coalesces these into a single ONNX forward
- *      pass (or a few, when chunk count > maxBatch). Sequential
- *      dispatch via the old sequenceLazy path would have triggered
- *      one ONNX call per chunk because each await resolves before
- *      the next dispatch.
- *
- *   2. Vector upsert per chunk (sqlite-vec, ~5ms each — kept serial
- *      because the underlying connection serializes anyway).
- *
- *   3. Single `graph.load()` → upsert all GraphNodes + next-chunk
- *      edges in memory → single `graph.save()`. Was 2N load+save
- *      cycles; now exactly 1. On a 16 MB graph.json, this alone
- *      saves ~130 ms × (N − 1) per item.
- *
- * Body-text cap on GraphNode.summary preserved (so `ask` / MCP /
- * smart-hook still render readable context). Edge-creation pass
- * preserved (next_chunk traversal still works).
- */
-const indexChunksFor = (
-  deps: IngestDeps,
-  descriptor: SourceDescriptor,
-  item: ContentItem,
-  contentHash: string,
-): ResultAsync<void, AppError> => {
-  // Single-item path delegates to the canonical batch use case in
-  // batch-ingest.ts. Was a near-duplicate of that function before
-  // the architectural review (BODY_MAX, dedupe trick, next-chunk
-  // edges all in two places). Now the batch path is the single
-  // implementation; this wrapper lets `processItems` call it with
-  // one item without a code-path fork.
-  void contentHash;
-  // Lazy import keeps ingest.ts ↔ batch-ingest.ts non-circular.
+  // Lazy import keeps ingest.ts ↔ batch-ingest.ts non-circular (the same
+  // reason the old single-item wrapper imported it this way).
   return ResultAsync.fromPromise(
     import('./batch-ingest.js').then(async ({ ingestBatch }) => {
-      const r = await ingestBatch(deps)({ descriptor, items: [item] });
+      const r = await ingestBatch(deps)({ descriptor, items });
       if (r.isErr()) throw r.error;
-      return undefined;
+      return r.value;
     }),
     (e): AppError =>
       e && typeof e === 'object' && 'type' in (e as object)
         ? (e as AppError)
         : { type: 'GraphWriteError', path: '<batch>', message: String(e) },
   );
-};
-
-/**
- * Build a SourceRun from a list of per-item decisions.
- */
-const aggregateRun = (
-  descriptor: SourceDescriptor,
-  seen: number,
-  decisions: readonly ItemDecision['kind'][],
-): SourceRun => {
-  let newCount = 0;
-  let updated = 0;
-  let skipped = 0;
-  for (const d of decisions) {
-    if (d === 'new') newCount++;
-    else if (d === 'updated') updated++;
-    else skipped++;
-  }
-  return {
-    source_id: descriptor.id,
-    kind: descriptor.kind,
-    items_seen: seen,
-    items_new: newCount,
-    items_updated: updated,
-    items_skipped: skipped,
-  };
 };
 
 /**
