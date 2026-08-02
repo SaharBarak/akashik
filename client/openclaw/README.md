@@ -120,6 +120,23 @@ MCP server gives the agent tools it can reach for deliberately. They compose.
 
 ## Status
 
-Read path (search + retrieve, local + peers) is implemented. The capture path
-— filing what your agent learns back into the graph — is next, and the privacy
-classifier above already gates it.
+Implemented:
+
+- **Memory corpus** — search and retrieve across your graph and connected
+  peers, alongside your existing memory backend.
+- **Network-before-web** — when the graph already answers a `web_search` or
+  `web_fetch`, the call is blocked and the agent gets the indexed context
+  instead. Same thresholds and env knobs as folklore's Claude Code hook
+  (`FOLKLORE_DENY_WEBSEARCH`, `FOLKLORE_DENY_THRESHOLD`,
+  `FOLKLORE_DENY_MIN_HITS`, `FOLKLORE_ENERGY_GATE`), so one mental model
+  covers both.
+
+Not yet:
+
+- **Capture** — filing what your agent learns back into the graph. The privacy
+  classifier above is written and tested ahead of it, since that is the part
+  that must be right before anything is written, let alone shared.
+- **Answering without inference** — serving a peer's distilled answer in place
+  of a model call, via `before_agent_run`. OpenClaw exposes the hook to do it;
+  folklore's `resolved-query://` nodes are the source. Deliberately last: it is
+  the most visible thing here and the one where a wrong-context reuse is worst.
