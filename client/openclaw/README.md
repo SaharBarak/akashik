@@ -131,12 +131,53 @@ Implemented:
   `FOLKLORE_DENY_MIN_HITS`, `FOLKLORE_ENERGY_GATE`), so one mental model
   covers both.
 
+- **Answering without inference** — opt-in, see below.
+
 Not yet:
 
-- **Capture** — filing what your agent learns back into the graph. The privacy
-  classifier above is written and tested ahead of it, since that is the part
-  that must be right before anything is written, let alone shared.
-- **Answering without inference** — serving a peer's distilled answer in place
-  of a model call, via `before_agent_run`. OpenClaw exposes the hook to do it;
-  folklore's `resolved-query://` nodes are the source. Deliberately last: it is
-  the most visible thing here and the one where a wrong-context reuse is worst.
+- **Automatic capture** — filing what your agent learns back into the graph as
+  it works. Traces can be recorded today with `folklore reuse record`; nothing
+  writes them automatically yet. The privacy classifier above is written and
+  tested ahead of that, since it is the part that must be right before anything
+  is written, let alone shared.
+
+## Answering without inference (opt-in)
+
+```bash
+FOLKLORE_REUSE_INFERENCE=1
+```
+
+When a question matches one already answered, the stored reasoning is served
+and **no model call is made**. OpenClaw's `before_agent_run` can end a turn
+before any model input, which is the interception point that makes this
+possible without a proxy.
+
+Record an answer for reuse:
+
+```bash
+folklore reuse record "what transport does the relay use" \
+  --trace "WebSockets over TLS on 443, because ..." --docs "https://example.com/doc"
+```
+
+**Off by default, and worth understanding why.** The threshold separating "the
+same question, reworded" from "a different question about the same subject" is
+not calibrated. Measured against one stored trace:
+
+| distance | question | verdict |
+|---|---|---|
+| 0.000 | the identical question | same |
+| 0.940 | "which transport protocol is the relay running on" | same |
+| 1.012 | "what protocol does the relay speak" | same |
+| 1.074 | "what port is the relay on" | **different** |
+
+Paraphrases and adjacent-but-distinct questions overlap, so no threshold on
+this evidence separates them. The shipped default (`0.25`) therefore admits
+little more than a restatement: low recall, but it cannot answer the wrong
+question. Answering the wrong question confidently is worse than paying for
+inference. Tune with `FOLKLORE_REUSE_MAX_DISTANCE` and
+`FOLKLORE_REUSE_MAX_AGE_DAYS` (default 30 — a stale answer served *as* the
+answer is a wrong answer, which is stricter than staleness in retrieval).
+
+Every served answer says so, naming the question it matched, its age and its
+sources: a user who cannot tell an answer was cached has no way to distrust it
+when it is wrong.
