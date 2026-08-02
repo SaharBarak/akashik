@@ -19,8 +19,15 @@ import {
   type OpenClawPluginDefinition,
 } from 'openclaw/plugin-sdk/plugin-entry';
 import { registerMemoryCorpusSupplement } from 'openclaw/plugin-sdk/memory-core';
-import { folkloreCorpus, CORPUS_NAME } from './corpus.js';
+import { folkloreCorpus, askVerdict, CORPUS_NAME } from './corpus.js';
 import { daemonAvailable, daemonSupports, socketPath } from './ipc.js';
+import {
+  DENIABLE_TOOLS,
+  blockMessage,
+  decideGate,
+  gateFromEnv,
+  queryFromParams,
+} from './gate.js';
 
 const PLUGIN_ID = 'folklore';
 
@@ -49,6 +56,39 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     }
 
     log.info?.(`[${PLUGIN_ID}] corpus "${CORPUS_NAME}" registered — daemon at ${socketPath()}`);
+
+    // ── network-before-web ──────────────────────────────────────────────
+    // Gate outbound web calls on the graph: if we (or a peer) already
+    // researched this, answer from memory instead of paying the network trip.
+    // Registered only for the web tools — every other tool call is untouched,
+    // so the hook costs nothing on the overwhelming majority of turns.
+    const gate = gateFromEnv();
+    api.on(
+      'before_tool_call',
+      async (event) => {
+        if (!DENIABLE_TOOLS.has(event.toolName)) return;
+
+        const query = queryFromParams(event.toolName, event.params ?? {});
+        if (!query) return; // unrecognised params — never gate on a guess
+
+        const verdict = await askVerdict(query);
+        if (!verdict) return; // no daemon, no opinion: let the web call through
+
+        const decision = decideGate(event.toolName, verdict, gate);
+        if (!decision.block) {
+          log.debug?.(`[${PLUGIN_ID}] allowing ${event.toolName} — ${decision.reason}`);
+          return;
+        }
+
+        log.info?.(
+          `[${PLUGIN_ID}] blocked ${event.toolName} — answered from the graph (${decision.reason})`,
+        );
+        return {
+          block: true,
+          blockReason: blockMessage(event.toolName, decision.reason, verdict.rendered),
+        };
+      },
+    );
 
     // A daemon that has been up for weeks runs whatever folklore was installed
     // when it started. `get` is newer than `ask`, so an old daemon serves
